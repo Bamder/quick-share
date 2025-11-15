@@ -1,0 +1,71 @@
+<!doctype html>
+<html>
+<head>
+  <title>取件码分享页</title>
+</head>
+<body>
+
+  <header>
+    <h1>取件码文件分享</h1>
+    <p>前端初版</p>
+  </header>
+
+  <section>
+    <h2>① 拖文件</h2>
+    <div>
+      <span>📂 把文件拖到这里</span>
+      <input type="file">
+    </div>
+    <p>已选：<span>未选择</span></p>
+    <label>有效期（分钟）：
+      <select>
+        <option>5</option>
+        <option>30</option>
+        <option>60</option>
+        <option>1440</option>
+      </select>
+    </label>
+    <label>可领取次数：
+      <select>
+        <option>1</option>
+        <option>3</option>
+        <option>10</option>
+        <option>999</option>
+      </select>
+    </label>
+    <button>生成取件码</button>
+  </section>
+
+  <section>
+    <h2>② 取件码</h2>
+    <h3>XXXXXX</h3>
+    <div>二维码区域</div>
+    <button>复制取件码</button>
+
+    <h3>分享状态</h3>
+    <table>
+      <thead>
+        <tr><th>项目</th><th>数值</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>文件大小</td><td>-</td></tr>
+        <tr><td>剩余时间</td><td>-</td></tr>
+        <tr><td>已领取/总次数</td><td>0 / 0</td></tr>
+        <tr><td>状态</td><td>等待中</td></tr>
+      </tbody>
+    </table>
+
+    <div>预览区</div>
+    <button>举报文件</button>
+  </section>
+
+  <section>
+    <h2>③ 输入取件码领取文件</h2>
+    <input placeholder="6 位取件码">
+    <button>领取文件</button>
+    <div>进度条</div>
+    <a>下载文件</a>
+  </section>
+
+</body>
+</html>
