@@ -106,7 +106,7 @@ function startStatusPolling() {
   }, 1000);
 }
 
-// 领取按钮事件
+// 领取按钮绑定事件
 document.getElementById('receiveBtn').onclick = function (){
   var code = document.getElementById('inputCode').value.trim().toUpperCase();
   if (!code) { alert('请输入取件码'); return; }
