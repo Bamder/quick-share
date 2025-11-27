@@ -19,6 +19,14 @@ if config.config_file_name is not None:
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
 from app.models.base import Base
+
+# 2. 【重要】导入所有你定义的模型，确保它们被 Base 发现
+#    这样 Alembic 才能在自动生成时看到这些模型
+from app.models.user import User
+from app.models.share_session import ShareSession
+from app.models.file_info import FileInfo
+from app.models.transfer_record import TransferRecord
+
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
