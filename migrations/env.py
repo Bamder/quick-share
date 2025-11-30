@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv  # 需 pip install python-dotenv
 
-from sqlalchemy import engine_from_config
+from sqlalchemy import engine_from_config, create_engine  # 新增 create_engine
 from sqlalchemy import pool
 from alembic import context
 
@@ -33,11 +33,20 @@ from app.models.transfer_record import TransferRecord
 
 target_metadata = Base.metadata
 
+# 新增：定义数据库连接URL（统一读取环境变量 DB_URL）
+def get_db_url():
+    """获取数据库连接URL，优先环境变量，兜底默认值"""
+    return os.getenv(
+        "DB_URL",  # 匹配你配置的环境变量名（无空格！）
+        # 兜底值：和你的数据库信息一致
+        "mysql+pymysql://root:123456@localhost:3306/quick_share_dataGrip?charset=utf8mb4"
+    )
+
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
-    # 优先读环境变量 DATABASE_URL，兜底读 alembic.ini 的配置
-    url = os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
+    # 直接用自定义函数获取URL，跳过ini文件解析
+    url = get_db_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -53,16 +62,12 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
-    # 优先读环境变量配置
-    config.set_main_option(
-        "sqlalchemy.url",
-        os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
-    )
-
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
+    # 核心修改：直接用环境变量URL创建引擎，不再读ini的占位符
+    db_url = get_db_url()
+    # 直接创建连接引擎，跳过config.set_main_option（避免解析ini报错）
+    connectable = create_engine(
+        db_url,
+        poolclass=pool.NullPool  # 保留原有池配置
     )
 
     with connectable.connect() as connection:
