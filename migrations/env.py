@@ -1,9 +1,17 @@
 from logging.config import fileConfig
+import sys
+import os
+from pathlib import Path
+from dotenv import load_dotenv  # 需 pip install python-dotenv
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
-
 from alembic import context
+
+# 解决模型导入路径问题（核心：将项目根目录加入Python路径）
+sys.path.append(str(Path(__file__).parent.parent))
+# 加载 .env 环境变量（优先读环境变量，避免改 alembic.ini）
+load_dotenv()
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -16,12 +24,8 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
 from app.models.base import Base
-
-# 2. 【重要】导入所有你定义的模型，确保它们被 Base 发现
-#    这样 Alembic 才能在自动生成时看到这些模型
+# 导入所有模型，确保 Base 能发现
 from app.models.user import User
 from app.models.share_session import ShareSession
 from app.models.file_info import FileInfo
@@ -29,30 +33,18 @@ from app.models.transfer_record import TransferRecord
 
 target_metadata = Base.metadata
 
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
-
 
 def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode.
-
-    This configures the context with just a URL
-    and not an Engine, though an Engine is acceptable
-    here as well.  By skipping the Engine creation
-    we don't even need a DBAPI to be available.
-
-    Calls to context.execute() here emit the given string to the
-    script output.
-
-    """
-    url = config.get_main_option("sqlalchemy.url")
+    """Run migrations in 'offline' mode."""
+    # 优先读环境变量 DATABASE_URL，兜底读 alembic.ini 的配置
+    url = os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        # 忽略 alembic 版本表，避免误操作
+        exclude_tables=["alembic_version"],
     )
 
     with context.begin_transaction():
@@ -60,12 +52,13 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode.
+    """Run migrations in 'online' mode."""
+    # 优先读环境变量配置
+    config.set_main_option(
+        "sqlalchemy.url",
+        os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
+    )
 
-    In this scenario we need to create an Engine
-    and associate a connection with the context.
-
-    """
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
@@ -74,7 +67,13 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            # 关键优化：精准对比字段类型/默认值，避免冗余迁移
+            compare_type=True,
+            compare_server_default=True,
+            # 忽略 alembic 版本表
+            exclude_tables=["alembic_version"],
         )
 
         with context.begin_transaction():
