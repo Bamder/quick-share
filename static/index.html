@@ -3,252 +3,171 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>文件闪传 - 取件码分享</title>
+    <title>QuickShare - 快速分享</title>
     <link rel="stylesheet" href="index.css" />
   </head>
   <body>
     <div class="container">
-      <!-- 头部区域 -->
+      <!-- 头部 -->
       <header class="app-header">
         <div class="header-content">
-          <h1 class="app-title">
-            <span class="app-icon">📁</span>文件闪传
-          </h1>
-          <p class="app-subtitle">安全、快速、便捷的文件分享工具</p>
-        </div>
-        <div class="header-decoration">
-          <div class="decoration-circle circle-1"></div>
-          <div class="decoration-circle circle-2"></div>
-          <div class="decoration-circle circle-3"></div>
+          <h1><i class="icon-share"></i> QuickShare</h1>
+          <p class="subtitle">高效快捷的文件分享工具</p>
         </div>
       </header>
 
-      <main class="main-content">
-        <!-- 步骤1: 上传文件 -->
-        <section class="card upload-section" id="step1">
-          <div class="step-indicator">
-            <div class="step-number active">1</div>
-            <h2 class="step-title">选择文件</h2>
-          </div>
-          
-          <div class="upload-area" id="dropArea">
-            <div class="upload-icon">📤</div>
-            <h3 class="upload-title">拖放文件到此处</h3>
-            <p class="upload-subtitle">或点击选择文件</p>
-            <p class="upload-hint">支持所有类型的文件，单文件最大支持 2GB</p>
-            <input type="file" id="fileInput" class="file-input" />
-            
-            <div class="preview-container" id="preview"></div>
-          </div>
-          
-          <div class="file-info" id="fileInfo">
-            <div class="file-info-header">
-              <span class="file-info-icon">📄</span>
-              <span id="fileName" class="file-name">未选择文件</span>
+      <main class="main-layout">
+        <!-- 左侧：主要功能 -->
+        <div class="primary-section">
+          <!-- 上传文件 -->
+          <section class="card upload-section">
+            <h2><i class="icon-upload"></i> 1. 上传分享文件</h2>
+            <div class="upload-area" id="dropArea">
+              <div class="upload-icon">📁</div>
+              <p class="upload-text">
+                拖放文件到此处 或 <span class="upload-link">点击选择</span>
+              </p>
+              <p class="upload-hint">最大支持 2GB，所有文件类型</p>
+              <input type="file" id="fileInput" class="file-input" />
             </div>
-            <div class="file-info-details">
-              <span id="fileSize" class="file-size">0 MB</span>
-            </div>
-          </div>
-          
-          <div class="share-settings">
-            <div class="setting-group">
-              <label class="setting-label">
-                <span class="label-icon">⏰</span>
-                有效期
-              </label>
-              <select id="expireSelect" class="setting-select">
-                <option value="5">5分钟</option>
-                <option value="30" selected>30分钟</option>
-                <option value="60">1小时</option>
-                <option value="1440">24小时</option>
-              </select>
-            </div>
-            
-            <div class="setting-group">
-              <label class="setting-label">
-                <span class="label-icon">🔢</span>
-                可领取次数
-              </label>
-              <select id="limitSelect" class="setting-select">
-                <option value="1">1次</option>
-                <option value="3" selected>3次</option>
-                <option value="10">10次</option>
-                <option value="999">不限次数</option>
-              </select>
-            </div>
-          </div>
-          
-          <button id="shareBtn" class="btn btn-primary btn-large" disabled>
-            <span class="btn-icon">🚀</span>
-            生成取件码
-          </button>
-        </section>
-
-        <!-- 步骤2: 取件码分享 -->
-        <section class="card code-section" id="codeSec" style="display: none">
-          <div class="step-indicator">
-            <div class="step-number active">2</div>
-            <h2 class="step-title">分享取件码</h2>
-          </div>
-          
-          <div class="code-display">
-            <div class="code-header">
-              <h3 class="code-title">您的取件码</h3>
-              <div class="code-timer" id="codeTimer">
-                <span class="timer-icon">⏳</span>
-                <span id="statTime">30:00</span> 后过期
+            <div class="file-info" id="fileInfo" style="display: none">
+              <div class="file-preview" id="preview"></div>
+              <div class="file-details">
+                <span id="fileName"></span>
+                <span id="fileSize"></span>
               </div>
             </div>
-            
-            <div class="code-container">
-              <div id="pickupCode" class="code-value">XXXXXX</div>
-              <button id="copyCodeBtn" class="btn btn-icon btn-copy">
-                <span class="btn-copy-text">复制</span>
-                <span class="btn-copy-icon">📋</span>
-              </button>
-            </div>
-            
-            <div class="qr-placeholder">
-              <div class="qr-code">
-                <div class="qr-grid"></div>
+            <div class="share-options">
+              <div class="option">
+                <label>有效期：</label>
+                <select id="expireSelect">
+                  <option value="5">5分钟</option>
+                  <option value="30" selected>30分钟</option>
+                  <option value="60">1小时</option>
+                  <option value="1440">24小时</option>
+                </select>
               </div>
-              <p class="qr-hint">扫码快速领取</p>
-            </div>
-          </div>
-          
-          <div class="share-stats">
-            <div class="stats-grid">
-              <div class="stat-item">
-                <div class="stat-icon">📊</div>
-                <div class="stat-label">文件大小</div>
-                <div id="statSize" class="stat-value">0 MB</div>
-              </div>
-              
-              <div class="stat-item">
-                <div class="stat-icon">👥</div>
-                <div class="stat-label">已领取/次数</div>
-                <div id="statCount" class="stat-value">0 / 3</div>
-              </div>
-              
-              <div class="stat-item">
-                <div class="stat-icon">📈</div>
-                <div class="stat-label">状态</div>
-                <div id="statStatus" class="stat-value status-active">等待中</div>
+              <div class="option">
+                <label>领取次数：</label>
+                <select id="limitSelect">
+                  <option value="1">1次</option>
+                  <option value="3" selected>3次</option>
+                  <option value="10">10次</option>
+                  <option value="999">不限</option>
+                </select>
               </div>
             </div>
-          </div>
-          
-          <div class="action-buttons">
-            <button id="reportBtn" class="btn btn-secondary">
-              <span class="btn-icon">⚠️</span>
-              举报文件
+            <button id="shareBtn" class="btn btn-primary" disabled>
+              <i class="icon-generate"></i> 生成取件码
             </button>
-          </div>
-        </section>
+          </section>
 
-        <!-- 步骤3: 领取文件 -->
-        <section class="card receive-section">
-          <div class="step-indicator">
-            <div class="step-number">3</div>
-            <h2 class="step-title">领取文件</h2>
-          </div>
-          
-          <div class="receive-form">
-            <div class="input-group">
-              <div class="input-icon">🔑</div>
-              <input
-                type="text"
-                id="inputCode"
-                class="form-input"
-                placeholder="请输入6位取件码"
-                maxlength="6"
-                autocomplete="off"
-              />
-              <div class="input-hint">输入大写字母或数字，不分大小写</div>
+          <!-- 接收文件 -->
+          <section class="card receive-section">
+            <h2><i class="icon-download"></i> 2. 接收文件</h2>
+            <div class="receive-form">
+              <div class="input-group">
+                <input
+                  type="text"
+                  id="inputCode"
+                  placeholder="输入6位取件码"
+                  maxlength="6"
+                />
+                <button id="receiveBtn" class="btn btn-primary">
+                  <i class="icon-receive"></i> 领取
+                </button>
+              </div>
+              <p class="input-hint">输入大写字母或数字，不分大小写</p>
             </div>
-            
-            <button id="receiveBtn" class="btn btn-primary btn-large">
-              <span class="btn-icon">⬇️</span>
-              领取文件
-            </button>
-          </div>
-          
-          <div class="progress-section">
-            <div class="progress-container" id="recvProgressBar" style="display: none">
+            <div
+              class="progress-container"
+              id="recvProgressBar"
+              style="display: none"
+            >
               <div class="progress-header">
-                <span class="progress-title">下载进度</span>
-                <span class="progress-percent">0%</span>
+                <span>下载进度</span>
+                <span id="progressPercent">0%</span>
               </div>
               <div class="progress-bar">
                 <div class="progress-fill"></div>
               </div>
             </div>
-            
             <a id="downloadLink" class="download-link" style="display: none">
-              <span class="download-icon">📥</span>
-              <span class="download-text">点击下载文件</span>
+              <i class="icon-save"></i> 下载文件
             </a>
-          </div>
-        </section>
+          </section>
+        </div>
 
-        <!-- 步骤4: 端口验证 -->
-        <section class="card config-section">
-          <div class="step-indicator">
-            <div class="step-number">4</div>
-            <h2 class="step-title">连接设置</h2>
-          </div>
-          
-          <div class="config-form">
-            <div class="input-group">
-              <label class="config-label">
-                <span class="label-icon">🔌</span>
-                后端端口
-              </label>
-              <div class="port-input-group">
+        <!-- 右侧：辅助功能 -->
+        <div class="secondary-section">
+          <!-- 取件码状态 -->
+          <section class="card code-section" id="codeSec" style="display: none">
+            <h2><i class="icon-code"></i> 取件码状态</h2>
+            <div class="code-display">
+              <div class="code-value" id="pickupCode">XXXXXX</div>
+              <button id="copyCodeBtn" class="btn btn-secondary">
+                <i class="icon-copy"></i> 复制
+              </button>
+            </div>
+            <div class="code-status">
+              <div class="status-item">
+                <span class="status-label">剩余时间：</span>
+                <span class="status-value" id="statTime">30:00</span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">文件大小：</span>
+                <span class="status-value" id="statSize">0 MB</span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">领取状态：</span>
+                <span class="status-value" id="statCount">0/3</span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">当前状态：</span>
+                <span class="status-value" id="statStatus">等待中</span>
+              </div>
+            </div>
+            <button id="reportBtn" class="btn btn-warning">
+              <i class="icon-report"></i> 举报文件
+            </button>
+          </section>
+
+          <!-- 连接设置 -->
+          <section class="card config-section">
+            <h2><i class="icon-settings"></i> 连接设置</h2>
+            <div class="config-form">
+              <div class="input-group">
+                <label>后端端口：</label>
                 <input
                   type="number"
                   id="portInput"
-                  class="form-input port-input"
                   value="8000"
                   min="1"
                   max="65535"
                 />
-                <button id="testBtn" class="btn btn-primary">
-                  <span class="btn-icon">🔍</span>
-                  测试连接
-                </button>
               </div>
-              <div class="port-result" id="portResult">
-                <span class="result-icon">ℹ️</span>
-                <span class="result-text">点击测试按钮检查端口连接</span>
+              <button id="testBtn" class="btn btn-secondary">
+                <i class="icon-test"></i> 测试连接
+              </button>
+              <div class="test-result" id="portResult">
+                <i class="icon-info"></i> 点击测试按钮检查连接
               </div>
             </div>
-          </div>
-          
-          <div class="config-info">
-            <div class="info-box">
-              <div class="info-icon">💡</div>
-              <div class="info-content">
-                <h4 class="info-title">使用提示</h4>
-                <ul class="info-list">
-                  <li>确保后端服务已启动</li>
-                  <li>默认端口为8000，根据实际情况修改</li>
-                  <li>端口检测通过后才能正常使用</li>
-                </ul>
-              </div>
+            <div class="config-tips">
+              <h3><i class="icon-tip"></i> 使用提示</h3>
+              <ul>
+                <li>确保后端服务已启动</li>
+                <li>默认端口为8000</li>
+                <li>连接成功后才能正常使用</li>
+              </ul>
             </div>
-          </div>
-        </section>
+          </section>
+        </div>
       </main>
 
+      <!-- 底部信息 -->
       <footer class="app-footer">
-        <p class="footer-text">
-          © 2023 文件闪传工具 | 
-          <a href="#" class="footer-link">隐私政策</a> | 
-          <a href="#" class="footer-link">使用条款</a>
-        </p>
-        <p class="footer-subtext">安全、快速、无需注册的文件分享解决方案</p>
+        <p>QuickShare 文件快速分享工具| 安全 · 快速 · 无需注册</p>
       </footer>
     </div>
 

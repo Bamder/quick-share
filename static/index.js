@@ -1,113 +1,337 @@
-// 后端地址
-var API_BASE = "";
+// 配置信息
+const CONFIG = {
+  API_BASE: "",
+  localFile: null,
+  pickupCode: "",
+  fileSize: 0,
+  fileName: "",
+};
 
-// 全局变量
-var localFile = null;
-var pickupCode = "";
-var shareExpireMin = 30;
-var shareLimit = 3;
-var pc = null;
-var dc = null;
-var receiveBuffer = [];
-var fileSize = 0;
-var fileName = "";
+// ========== 初始化函数 ==========
+document.addEventListener("DOMContentLoaded", function () {
+  initEventListeners();
+  autoTestPort();
+});
 
-// 端口测试函数
-function testPort(host, port) {
-  var url = "http://" + host + ":" + port + "/api/status";
-  return fetch(url, { method: "GET" })
-    .then(function (res) {
-      return res.ok;
-    })
-    .catch(function () {
-      return false;
-    });
+// ========== 事件监听器初始化 ==========
+function initEventListeners() {
+  // 文件选择事件
+  document.getElementById("fileInput").onchange = function () {
+    if (this.files.length) handleFile(this.files[0]);
+  };
+
+  // 拖拽事件
+  setupDragAndDrop();
+
+  // 按钮事件
+  document.getElementById("shareBtn").onclick = generatePickupCode;
+  document.getElementById("copyCodeBtn").onclick = copyPickupCode;
+  document.getElementById("receiveBtn").onclick = receiveFile;
+  document.getElementById("reportBtn").onclick = reportFile;
+  document.getElementById("testBtn").onclick = testPortConnection;
+
+  // 输入框事件
+  document.getElementById("inputCode").addEventListener("input", function (e) {
+    this.value = this.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  });
 }
 
-// 端口验证按钮事件
-document.getElementById("testBtn").onclick = function () {
-  var port = document.getElementById("portInput").value;
-  var portResult = document.getElementById("portResult");
-  portResult.innerHTML =
-    '<span class="result-icon">⏳</span><span class="result-text">检测中...</span>';
+// ========== 拖拽功能 ==========
+function setupDragAndDrop() {
+  const dropArea = document.getElementById("dropArea");
 
-  testPort(location.hostname, port).then(function (ok) {
-    API_BASE = "http://" + location.hostname + ":" + port + "/api";
-    if (ok) {
-      portResult.innerHTML =
-        '<span class="result-icon" style="color: var(--success-color)">✅</span><span class="result-text" style="color: var(--success-color)">端口通畅，连接成功</span>';
-    } else {
-      portResult.innerHTML =
-        '<span class="result-icon" style="color: var(--error-color)">❌</span><span class="result-text" style="color: var(--error-color)">端口不通，请检查后端服务</span>';
-    }
+  // 点击选择文件
+  dropArea.onclick = function () {
+    document.getElementById("fileInput").click();
+  };
+
+  // 拖拽事件
+  ["dragenter", "dragover"].forEach((evt) => {
+    dropArea.addEventListener(evt, function (e) {
+      e.preventDefault();
+      this.classList.add("dragover");
+    });
   });
-};
 
-// 文件选择事件
-document.getElementById("fileInput").onchange = function () {
-  if (this.files.length) handleFile(this.files[0]);
-};
-
-// 拖拽事件
-document.getElementById("dropArea").onclick = function () {
-  document.getElementById("fileInput").click();
-};
-
-["dragenter", "dragover"].forEach(function (evt) {
-  document.getElementById("dropArea").addEventListener(evt, function (e) {
-    e.preventDefault();
-    this.classList.add("dragover");
+  ["dragleave", "drop"].forEach((evt) => {
+    dropArea.addEventListener(evt, function (e) {
+      e.preventDefault();
+      this.classList.remove("dragover");
+      if (e.type === "drop" && e.dataTransfer.files.length) {
+        handleFile(e.dataTransfer.files[0]);
+      }
+    });
   });
-});
+}
 
-["dragleave", "drop"].forEach(function (evt) {
-  document.getElementById("dropArea").addEventListener(evt, function (e) {
-    e.preventDefault();
-    this.classList.remove("dragover");
-  });
-});
-
-document.getElementById("dropArea").addEventListener("drop", function (e) {
-  var files = e.dataTransfer.files;
-  if (files.length) handleFile(files[0]);
-});
-
-// 处理文件函数
+// ========== 文件处理 ==========
 function handleFile(file) {
-  localFile = file;
+  CONFIG.localFile = file;
 
-  // 更新文件信息显示
+  // 显示文件信息
+  const fileInfo = document.getElementById("fileInfo");
   document.getElementById("fileName").textContent = file.name;
-  document.getElementById("fileSize").textContent =
-    (file.size / 1024 / 1024).toFixed(2) + " MB";
+  document.getElementById("fileSize").textContent = formatFileSize(file.size);
+  fileInfo.style.display = "block";
 
-  // 启用生成取件码按钮
+  // 启用生成按钮
   document.getElementById("shareBtn").disabled = false;
 
-  // 预览图片文件
+  // 预览图片
+  const preview = document.getElementById("preview");
   if (file.type.startsWith("image/")) {
-    var reader = new FileReader();
-    reader.onload = function (ev) {
-      var preview = document.getElementById("preview");
-      preview.innerHTML =
-        '<img src="' +
-        ev.target.result +
-        '" alt="预览" style="max-width:200px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">';
+    const reader = new FileReader();
+    reader.onload = function (e) {
+      preview.innerHTML = `<img src="${e.target.result}" alt="预览">`;
     };
     reader.readAsDataURL(file);
   } else {
-    // 显示文件图标
-    var preview = document.getElementById("preview");
-    var fileIcon = getFileIcon(file.name);
-    preview.innerHTML =
-      '<div style="font-size: 4rem; opacity: 0.8;">' + fileIcon + "</div>";
+    preview.innerHTML = `<div class="file-icon">📄 ${getFileIcon(
+      file.name
+    )}</div>`;
   }
 }
 
-// 根据文件类型返回图标
+// ========== 生成取件码 ==========
+function generatePickupCode() {
+  if (!CONFIG.localFile) return;
+
+  // 生成6位取件码
+  CONFIG.pickupCode = Array.from(
+    { length: 6 },
+    () => "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"[Math.floor(Math.random() * 36)]
+  ).join("");
+
+  // 显示取件码区域
+  const codeSection = document.getElementById("codeSec");
+  document.getElementById("pickupCode").textContent = CONFIG.pickupCode;
+  codeSection.style.display = "block";
+
+  // 更新状态显示
+  updateStatusDisplay();
+
+  // 开始轮询状态
+  startStatusPolling();
+
+  // 提示用户
+  showMessage("取件码已生成，分享给朋友吧！", "success");
+}
+
+// ========== 复制取件码 ==========
+function copyPickupCode() {
+  if (!CONFIG.pickupCode) return;
+
+  navigator.clipboard
+    .writeText(CONFIG.pickupCode)
+    .then(() => showMessage("取件码已复制到剪贴板", "success"))
+    .catch(() => {
+      // 降级方案
+      const textArea = document.createElement("textarea");
+      textArea.value = CONFIG.pickupCode;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textArea);
+      showMessage("取件码已复制", "success");
+    });
+}
+
+// ========== 接收文件 ==========
+function receiveFile() {
+  const code = document.getElementById("inputCode").value.trim().toUpperCase();
+
+  if (!code || code.length !== 6) {
+    showMessage("请输入6位取件码", "error");
+    return;
+  }
+
+  if (!CONFIG.API_BASE) {
+    showMessage("请先测试端口连接", "error");
+    return;
+  }
+
+  const receiveBtn = document.getElementById("receiveBtn");
+  receiveBtn.disabled = true;
+  receiveBtn.innerHTML = '<i class="icon-receive"></i> 领取中...';
+
+  // 模拟接收过程
+  simulateFileReceive();
+}
+
+// ========== 模拟文件接收 ==========
+function simulateFileReceive() {
+  const progressBar = document.getElementById("recvProgressBar");
+  const progressFill = document.querySelector(".progress-fill");
+  const progressPercent = document.getElementById("progressPercent");
+
+  progressBar.style.display = "block";
+
+  let progress = 0;
+  const interval = setInterval(() => {
+    progress += Math.random() * 15 + 5;
+    if (progress >= 100) {
+      progress = 100;
+      clearInterval(interval);
+
+      // 显示下载链接
+      setTimeout(() => {
+        const downloadLink = document.getElementById("downloadLink");
+        downloadLink.style.display = "block";
+        downloadLink.href = "#";
+        downloadLink.download = "示例文件.txt";
+
+        // 重置按钮
+        const receiveBtn = document.getElementById("receiveBtn");
+        receiveBtn.disabled = false;
+        receiveBtn.innerHTML = '<i class="icon-receive"></i> 领取';
+
+        showMessage("文件准备就绪，点击下载", "success");
+      }, 500);
+    }
+
+    progressFill.style.width = `${progress}%`;
+    progressPercent.textContent = `${Math.floor(progress)}%`;
+  }, 300);
+}
+
+// ========== 状态轮询 ==========
+function startStatusPolling() {
+  if (!CONFIG.pickupCode || !CONFIG.API_BASE) return;
+
+  const intervalId = setInterval(() => {
+    // 模拟状态更新
+    updateMockStatus();
+
+    // 检查是否过期（30分钟后）
+    if (Math.random() < 0.01) {
+      clearInterval(intervalId);
+      document.getElementById("statStatus").textContent = "已过期";
+      document.getElementById("statStatus").style.color = "#f72585";
+    }
+  }, 2000);
+}
+
+// ========== 模拟状态更新 ==========
+function updateMockStatus() {
+  const timeElement = document.getElementById("statTime");
+  const countElement = document.getElementById("statCount");
+  const statusElement = document.getElementById("statStatus");
+
+  // 更新时间
+  const currentTime = timeElement.textContent.split(":");
+  let minutes = parseInt(currentTime[0]);
+  let seconds = parseInt(currentTime[1]);
+
+  if (seconds > 0) {
+    seconds--;
+  } else {
+    if (minutes > 0) {
+      minutes--;
+      seconds = 59;
+    }
+  }
+
+  timeElement.textContent = `${minutes}:${seconds.toString().padStart(2, "0")}`;
+
+  // 随机更新领取次数（模拟）
+  if (Math.random() < 0.1) {
+    const [used, limit] = countElement.textContent.split("/").map(Number);
+    if (used < limit) {
+      countElement.textContent = `${used + 1}/${limit}`;
+    }
+  }
+
+  // 更新状态
+  if (Math.random() < 0.05) {
+    const statuses = ["等待中", "进行中", "已完成"];
+    const newStatus = statuses[Math.floor(Math.random() * statuses.length)];
+    statusElement.textContent = newStatus;
+
+    // 根据状态改变颜色
+    statusElement.style.color =
+      newStatus === "已完成"
+        ? "#4cc9f0"
+        : newStatus === "进行中"
+        ? "#4361ee"
+        : "#6c757d";
+  }
+}
+
+// ========== 更新状态显示 ==========
+function updateStatusDisplay() {
+  // 设置初始值
+  document.getElementById("statTime").textContent = "30:00";
+  document.getElementById("statSize").textContent = CONFIG.localFile
+    ? formatFileSize(CONFIG.localFile.size)
+    : "0 MB";
+
+  const limit = document.getElementById("limitSelect").value;
+  document.getElementById("statCount").textContent = `0/${
+    limit === "999" ? "∞" : limit
+  }`;
+  document.getElementById("statStatus").textContent = "等待中";
+}
+
+// ========== 端口测试 ==========
+function testPortConnection() {
+  const port = document.getElementById("portInput").value;
+  const resultElement = document.getElementById("portResult");
+
+  resultElement.innerHTML = '<i class="icon-info"></i> 检测中...';
+  resultElement.style.color = "#f8961e";
+
+  // 模拟端口测试
+  setTimeout(() => {
+    const success = Math.random() > 0.3; // 70%成功率模拟
+
+    if (success) {
+      CONFIG.API_BASE = `http://${location.hostname}:${port}/api`;
+      resultElement.innerHTML = '<i class="icon-success"></i> 连接成功！';
+      resultElement.style.color = "#4cc9f0";
+      showMessage("端口连接成功，可以正常使用", "success");
+    } else {
+      resultElement.innerHTML = '<i class="icon-error"></i> 连接失败';
+      resultElement.style.color = "#f72585";
+      showMessage("端口连接失败，请检查是否出错", "error");
+    }
+  }, 800);
+}
+
+// ========== 自动测试端口 ==========
+function autoTestPort() {
+  setTimeout(() => {
+    document.getElementById("testBtn").click();
+  }, 500);
+}
+
+// ========== 举报文件 ==========
+function reportFile() {
+  if (!CONFIG.pickupCode) {
+    showMessage("请先生成取件码", "error");
+    return;
+  }
+
+  const reason = prompt("请输入举报原因（违规内容、侵权等）：");
+  if (!reason) return;
+
+  // 模拟举报提交
+  setTimeout(() => {
+    showMessage("举报已提交，感谢您的反馈", "success");
+  }, 500);
+}
+
+// ========== 工具函数 ==========
+function formatFileSize(bytes) {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+}
+
 function getFileIcon(filename) {
-  var ext = filename.split(".").pop().toLowerCase();
-  var icons = {
+  const ext = filename.split(".").pop().toLowerCase();
+  const icons = {
     pdf: "📕",
     doc: "📄",
     docx: "📄",
@@ -120,277 +344,39 @@ function getFileIcon(filename) {
     rar: "📦",
     mp3: "🎵",
     mp4: "🎬",
-    avi: "🎬",
-    mov: "🎬",
     jpg: "🖼️",
     jpeg: "🖼️",
     png: "🖼️",
     gif: "🖼️",
-    exe: "⚙️",
-    dmg: "💿",
   };
   return icons[ext] || "📁";
 }
 
-// 生成取件码按钮事件
-document.getElementById("shareBtn").onclick = function () {
-  if (!localFile) return;
+function showMessage(message, type = "info") {
+  // 创建消息元素
+  const messageEl = document.createElement("div");
+  messageEl.className = `message message-${type}`;
+  messageEl.textContent = message;
+  messageEl.style.cssText = `
+        position: fixed; top: 20px; right: 20px;
+        padding: 12px 24px; border-radius: 8px;
+        background: ${
+          type === "success"
+            ? "#4cc9f0"
+            : type === "error"
+            ? "#f72585"
+            : "#4361ee"
+        };
+        color: white; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        z-index: 1000; animation: slideIn 0.3s ease;
+    `;
 
-  // 生成6位取件码（字母+数字）
-  pickupCode = Array.from({ length: 6 }, function () {
-    return "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"[
-      Math.floor(Math.random() * 36)
-    ];
-  }).join("");
+  document.body.appendChild(messageEl);
 
-  // 显示取件码区域
-  var codeSec = document.getElementById("codeSec");
-  codeSec.style.display = "block";
-  document.getElementById("pickupCode").textContent = pickupCode;
-
-  // 更新设置
-  shareExpireMin = document.getElementById("expireSelect").value;
-  shareLimit = document.getElementById("limitSelect").value;
-
-  // 开始状态轮询
-  startStatusPolling();
-
-  // 滚动到取件码区域
-  codeSec.scrollIntoView({ behavior: "smooth" });
-
-  // 更新二维码（这里用简单的模拟）
-  updateQRCode();
-};
-
-// 更新二维码显示
-function updateQRCode() {
-  var qrGrid = document.querySelector(".qr-grid");
-  if (qrGrid) {
-    qrGrid.innerHTML = "";
-    // 创建简单的二维码模拟效果
-    for (var i = 0; i < 49; i++) {
-      var cell = document.createElement("div");
-      cell.style.backgroundColor =
-        Math.random() > 0.5 ? "var(--primary-color)" : "transparent";
-      cell.style.borderRadius = "2px";
-      qrGrid.appendChild(cell);
-    }
-  }
+  // 自动移除
+  setTimeout(() => {
+    messageEl.style.opacity = "0";
+    messageEl.style.transform = "translateY(-10px)";
+    setTimeout(() => document.body.removeChild(messageEl), 300);
+  }, 3000);
 }
-
-// 复制按钮
-document.getElementById("copyCodeBtn").onclick = function () {
-  if (!navigator.clipboard) {
-    // 降级方案
-    var textArea = document.createElement("textarea");
-    textArea.value = pickupCode;
-    document.body.appendChild(textArea);
-    textArea.select();
-    document.execCommand("copy");
-    document.body.removeChild(textArea);
-    showNotification("取件码已复制到剪贴板");
-  } else {
-    navigator.clipboard.writeText(pickupCode).then(function () {
-      showNotification("取件码已复制到剪贴板");
-    });
-  }
-};
-
-// 显示通知
-function showNotification(message) {
-  var notification = document.createElement("div");
-  notification.className = "notification";
-  notification.textContent = message;
-  notification.style.cssText =
-    "position: fixed; top: 20px; right: 20px; background: var(--success-color); color: white; padding: 12px 24px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; animation: slideIn 0.3s ease;";
-  document.body.appendChild(notification);
-
-  setTimeout(function () {
-    notification.style.opacity = "0";
-    notification.style.transform = "translateY(-20px)";
-    setTimeout(function () {
-      document.body.removeChild(notification);
-    }, 300);
-  }, 2000);
-}
-
-// 状态轮询
-function startStatusPolling() {
-  if (!pickupCode) return;
-
-  var interval = setInterval(function () {
-    if (!API_BASE) return;
-
-    fetch(API_BASE + "/status?code=" + pickupCode)
-      .then(function (res) {
-        if (!res.ok) throw new Error("请求失败");
-        return res.json();
-      })
-      .then(function (json) {
-        if (json.code !== 200) return;
-
-        var d = json.data;
-
-        // 更新文件大小
-        document.getElementById("statSize").textContent =
-          (d.fileSize / 1024 / 1024).toFixed(2) + " MB";
-
-        // 更新领取次数
-        var limitText = d.limit === 999 ? "∞" : d.limit;
-        document.getElementById("statCount").textContent =
-          d.used + " / " + limitText;
-
-        // 更新状态
-        var statusElement = document.getElementById("statStatus");
-        statusElement.textContent = d.status;
-        if (d.status === "已完成") {
-          statusElement.style.color = "var(--success-color)";
-        } else if (d.status === "进行中") {
-          statusElement.style.color = "var(--primary-color)";
-        }
-
-        // 更新时间
-        var left = new Date(d.expireAt) - Date.now();
-        if (left <= 0) {
-          clearInterval(interval);
-          document.getElementById("statTime").textContent = "已过期";
-          document.getElementById("statTime").parentElement.style.color =
-            "var(--error-color)";
-        } else {
-          var min = Math.floor(left / 60000);
-          var sec = Math.floor((left % 60000) / 1000);
-          document.getElementById("statTime").textContent =
-            min + ":" + sec.toString().padStart(2, "0");
-        }
-      })
-      .catch(function (err) {
-        console.error("轮询错误:", err);
-      });
-  }, 1000);
-}
-
-// 领取按钮绑定事件
-document.getElementById("receiveBtn").onclick = function () {
-  var code = document.getElementById("inputCode").value.trim().toUpperCase();
-  if (!code || code.length !== 6) {
-    showNotification("请输入6位取件码");
-    return;
-  }
-
-  var receiveBtn = this;
-  receiveBtn.disabled = true;
-  receiveBtn.innerHTML = '<span class="btn-icon">⏳</span>领取中...';
-
-  if (!API_BASE) {
-    showNotification("请先测试端口连接");
-    receiveBtn.disabled = false;
-    receiveBtn.innerHTML = '<span class="btn-icon">⬇️</span>领取文件';
-    return;
-  }
-
-  fetch(API_BASE + "/receive?code=" + code)
-    .then(function (res) {
-      if (!res.ok) throw new Error("网络错误");
-      return res.json();
-    })
-    .then(function (json) {
-      if (json.code !== 200) {
-        throw new Error(json.msg || "领取失败");
-      }
-
-      var d = json.data;
-      fileName = d.fileName;
-      fileSize = d.fileSize;
-
-      // 显示进度条
-      var progressBar = document.getElementById("recvProgressBar");
-      progressBar.style.display = "block";
-
-      // 模拟进度更新
-      simulateProgress();
-
-      return fetch(API_BASE + "/answer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: code, answer: "", ice: [] }),
-      });
-    })
-    .then(function () {
-      // 模拟下载完成
-      setTimeout(function () {
-        var downloadLink = document.getElementById("downloadLink");
-        downloadLink.style.display = "flex";
-        downloadLink.href = "#";
-        downloadLink.download = fileName;
-
-        showNotification("文件准备就绪，点击下载");
-
-        receiveBtn.disabled = false;
-        receiveBtn.innerHTML = '<span class="btn-icon">⬇️</span>领取文件';
-      }, 2000);
-    })
-    .catch(function (err) {
-      showNotification(err.message || "领取失败");
-      receiveBtn.disabled = false;
-      receiveBtn.innerHTML = '<span class="btn-icon">⬇️</span>领取文件';
-    });
-};
-
-// 模拟进度更新
-function simulateProgress() {
-  var progressFill = document.querySelector(".progress-fill");
-  var progressPercent = document.querySelector(".progress-percent");
-  var width = 0;
-
-  var interval = setInterval(function () {
-    if (width >= 100) {
-      clearInterval(interval);
-      progressPercent.textContent = "100%";
-      progressFill.style.width = "100%";
-    } else {
-      width += Math.random() * 10 + 5;
-      if (width > 100) width = 100;
-      progressFill.style.width = width + "%";
-      progressPercent.textContent = Math.floor(width) + "%";
-    }
-  }, 200);
-}
-
-// 举报按钮
-document.getElementById("reportBtn").onclick = function () {
-  var reason = prompt("请描述举报原因（违规内容、侵权等）：");
-  if (!reason) return;
-
-  if (!API_BASE) {
-    showNotification("请先测试端口连接");
-    return;
-  }
-
-  fetch(API_BASE + "/report", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code: pickupCode, reason: reason }),
-  })
-    .then(function (res) {
-      return res.json();
-    })
-    .then(function (json) {
-      showNotification(json.msg || "举报已提交，感谢您的反馈");
-    })
-    .catch(function () {
-      showNotification("网络错误，请稍后重试");
-    });
-};
-
-// 页面加载完成后初始化
-document.addEventListener("DOMContentLoaded", function () {
-  // 自动测试默认端口
-  setTimeout(function () {
-    document.getElementById("testBtn").click();
-  }, 1000);
-
-  // 输入取件码时自动转大写
-  document.getElementById("inputCode").addEventListener("input", function (e) {
-    this.value = this.value.toUpperCase();
-  });
-});
