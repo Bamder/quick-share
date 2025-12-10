@@ -1,0 +1,967 @@
+openapi: 3.0.3
+info:
+  title: 文件闪传系统API
+  description: |
+    # 项目综述
+    
+    ## 系统简介
+    基于取件码的匿名P2P文件分享系统。用户上传文件后生成6位取件码，其他人通过取件码直接建立P2P连接传输文件。
+    
+    ## 各组职责分工
+    
+    ### 端口组 (API组)
+    负责实现本API文档中的所有接口，协调各组工作，处理业务逻辑。
+    
+    ### 数据库组
+    负责设计数据库表结构，提供数据存储和查询的基础函数。
+    需要提供的函数示例：
+    - 从pickup_codes表查询取件码状态
+    - 在files表插入文件信息
+    - 更新取件码使用次数
+    - 记录WebRTC会话信息
+    
+    ## 算法组
+    负责实现智能算法逻辑，提供可调用的算法函数。
+    需要提供的函数示例：
+    - 生成唯一取件码
+    - 评估安全风险
+    - 计算传输优化参数
+    - 检测异常行为
+    
+    ## 前端组
+    负责用户界面，实现WebRTC连接和文件传输。
+    
+    ## 服务降级策略
+    当某个服务不可用时，系统应有备用方案：
+    1. 算法服务不可用时：使用简单随机算法+重试机制生成取件码
+    2. 数据库服务不可用时：返回服务不可用错误，前端提示用户稍后重试
+    3. WebRTC连接失败时：提示用户检查网络，建议重试
+    
+    ## 接口调用流程示例
+    1. 上传文件 → 调用取件码生成接口 → 等待连接
+    2. 输入取件码 → 获取文件信息 → 建立WebRTC连接
+    3. P2P文件传输 → 更新使用次数 → 传输完成
+  version: 1.0.1
+  contact:
+    name: 端口组
+    email: api-team@example.com
+
+servers:
+  - url: http://localhost:8000
+    description: 开发环境
+  - url: https://api.fileshare.com
+    description: 生产环境
+
+tags:
+  - name: 系统状态
+    description: 服务健康检查接口
+  - name: 取件码管理
+    description: 取件码的生成、查询和管理
+  - name: 文件传输
+    description: 文件信息获取、WebRTC信令交换和传输优化
+  - name: 安全管理
+    description: 举报、风险评估和安全控制
+  - name: 算法服务
+    description: 算法相关功能接口
+
+paths:
+  ## 系统状态检查接口
+  /health:
+    get:
+      tags:
+        - 系统状态
+      summary: 服务健康检查
+      description: 检查API服务以及相关依赖服务（数据库、算法服务）的运行状态
+      operationId: checkHealth
+      responses:
+        '200':
+          description: 所有服务运行正常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: 所有服务运行正常
+                data:
+                  status: healthy
+                  timestamp: "2023-12-01T10:00:00Z"
+                  version: "1.0.1"
+                  database: available
+                  algorithm_service: available
+
+  # 取件码生成接口 - 上传文件后调用
+  /api/codes:
+    post:
+      tags:
+        - 取件码管理
+      summary: 生成取件码
+      description: |
+        为上传的文件生成一个唯一的取件码。
+        
+        端口组实现此接口时需要：
+        1. 调用算法组的generate_pickup_code()函数获取唯一取件码
+        2. 调用数据库组的create_pickup_code()函数保存取件码信息
+        3. 返回生成的取件码给前端
+      operationId: generatePickupCode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateCodeRequest'
+      responses:
+        '201':
+          description: 取件码生成成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 201
+                msg: 取件码生成成功
+                data:
+                  pickupCode: "A1B2C3"
+                  expiresAt: "2023-12-01T15:30:00.000Z"
+                  limitCount: 3
+        '503':
+          description: 算法服务不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 503
+                msg: 取件码生成服务暂时不可用
+                data:
+                  suggestion: "请稍后重试"
+
+  # 查询取件码状态
+  /api/codes/{code}/status:
+    get:
+      tags:
+        - 取件码管理
+      summary: 查询取件码状态
+      description: |
+        根据取件码查询文件分享状态，包括剩余下载次数、过期时间等。
+        
+        端口组实现此接口时需要：
+        调用数据库组的get_share_status_by_code()函数查询取件码信息
+      operationId: getCodeStatus
+      parameters:
+        - name: code
+          in: path
+          required: true
+          description: 6位取件码，大写字母和数字组合
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: A1B2C3
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: success
+                data:
+                  fileSize: 10485760
+                  usedCount: 2
+                  limitCount: 3
+                  status: "waiting"
+                  expireAt: "2023-12-01T15:30:00.000Z"
+                  createdAt: "2023-12-01T10:00:00.000Z"
+        '404':
+          description: 取件码不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 404
+                msg: 取件码不存在
+                data: null
+
+  # 增加取件码使用次数 - 文件被成功下载时调用
+  /api/codes/{code}/usage:
+    post:
+      tags:
+        - 取件码管理
+      summary: 增加使用次数
+      description: |
+        文件被成功下载时调用此接口，增加取件码的使用次数计数。
+        
+        端口组实现此接口时需要：
+        1. 调用数据库组的increment_usage_count()函数更新使用次数
+        2. 调用算法组的record_download_event()函数记录下载事件（用于风控分析）
+      operationId: incrementUsage
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: A1B2C3
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                clientIp:
+                  type: string
+                  description: 下载客户端的IP地址
+                userAgent:
+                  type: string
+                  description: 下载客户端的浏览器信息
+      responses:
+        '200':
+          description: 使用次数增加成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: 使用次数已更新
+                data:
+                  code: "A1B2C3"
+                  usedCount: 3
+                  limitCount: 3
+                  remaining: 0
+        '400':
+          description: 已达到下载次数上限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 400
+                msg: 该取件码的下载次数已达上限
+                data: null
+
+  # 获取文件详细信息
+  /api/codes/{code}/file-info:
+    get:
+      tags:
+        - 文件传输
+      summary: 获取文件信息
+      description: |
+        根据取件码获取文件的详细信息，用于下载前展示。
+        
+        端口组实现此接口时需要：
+        调用数据库组的get_file_info_by_code()函数查询文件信息
+      operationId: getFileInfo
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: A1B2C3
+      responses:
+        '200':
+          description: 获取成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: success
+                data:
+                  fileId: 123
+                  fileName: "项目报告.pdf"
+                  fileSize: 5242880
+                  mimeType: "application/pdf"
+                  hash: "sha256:abc123..."
+                  uploadedAt: "2023-12-01T10:00:00.000Z"
+        '404':
+          description: 文件不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 404
+                msg: 文件不存在或已被删除
+                data: null
+
+  # 获取传输优化参数 - 前端在传输过程中定期调用
+  /api/transfer/{code}/optimize:
+    get:
+      tags:
+        - 文件传输
+        - 算法服务
+      summary: 获取传输优化参数
+      description: |
+        获取当前网络条件下的最优传输参数，如分片大小、重试策略等。
+        前端应在传输开始和网络变化时调用此接口。
+        
+        端口组实现此接口时需要：
+        调用算法组的calculate_optimization_params()函数获取优化参数
+      operationId: getOptimizationParams
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: A1B2C3
+        - name: network_metrics
+          in: query
+          required: false
+          description: 客户端测量的网络指标，JSON格式字符串
+          schema:
+            type: string
+          example: '{"rtt": 150, "packetLoss": 0.05, "throughput": 1024000}'
+      responses:
+        '200':
+          description: 获取成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: success
+                data:
+                  chunkSize: 262144
+                  useTurnServer: false
+                  retryStrategy: "exponential_backoff"
+                  iceTimeout: 30000
+                  parallelChunks: 2
+
+  # 创建WebRTC连接Offer - 分享方创建连接时调用
+  /api/codes/{code}/webrtc/offer:
+    post:
+      tags:
+        - 文件传输
+      summary: 创建WebRTC Offer
+      description: |
+        分享方创建WebRTC连接的SDP Offer。
+        
+        端口组实现此接口时需要：
+        1. 调用算法组的validate_session_rate_limit()函数检查频率限制
+        2. 调用算法组的assess_connection_risk()函数评估连接风险
+        3. 调用数据库组的create_webrtc_offer()函数保存Offer信息
+      operationId: createWebRTCOffer
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: A1B2C3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebRTCOfferRequest'
+      responses:
+        '201':
+          description: Offer创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 201
+                msg: WebRTC Offer创建成功
+                data:
+                  sessionId: "sess_abc123"
+                  expiresIn: 300
+        '429':
+          description: 请求频率过高
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 429
+                msg: 创建会话频率过高，请稍后重试
+                data:
+                  retryAfter: 60
+
+  # 获取WebRTC Offer - 下载方获取连接信息
+  /api/codes/{code}/webrtc/offer/{session_id}:
+    get:
+      tags:
+        - 文件传输
+      summary: 获取WebRTC Offer
+      description: |
+        下载方获取分享方创建的WebRTC Offer信息。
+        
+        端口组实现此接口时需要：
+        1. 调用算法组的validate_offer_access()函数验证访问权限
+        2. 调用数据库组的get_webrtc_offer()函数查询Offer信息
+      operationId: getWebRTCOffer
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: A1B2C3
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "sess_abc123"
+      responses:
+        '200':
+          description: 获取成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: success
+                data:
+                  offer: "v=0\r\no=- 123456 2 IN IP4 127.0.0.1..."
+                  createdAt: "2023-12-01T10:00:00.000Z"
+        '403':
+          description: 访问被拒绝（风控系统拦截）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 403
+                msg: 访问被拒绝，可能存在安全风险
+                data: null
+        '404':
+          description: Offer不存在或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 404
+                msg: WebRTC会话不存在或已过期
+                data: null
+
+  # 提交WebRTC Answer - 下载方响应连接
+  /api/codes/{code}/webrtc/answer:
+    post:
+      tags:
+        - 文件传输
+      summary: 提交WebRTC Answer
+      description: |
+        下载方创建WebRTC Answer并提交给服务器。
+        
+        端口组实现此接口时需要：
+        1. 调用算法组的validate_answer_integrity()函数验证Answer完整性
+        2. 调用数据库组的update_webrtc_answer()函数保存Answer信息
+      operationId: submitWebRTCAnswer
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: A1B2C3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebRTCAnswerRequest'
+      responses:
+        '200':
+          description: Answer提交成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: WebRTC Answer提交成功
+                data:
+                  sessionId: "sess_abc123"
+                  status: "answer_received"
+
+  # 举报违规文件
+  /api/reports:
+    post:
+      tags:
+        - 安全管理
+      summary: 举报违规文件
+      description: |
+        用户举报违规或侵权文件。
+        
+        端口组实现此接口时需要：
+        1. 调用算法组的calculate_report_credibility()函数评估举报可信度
+        2. 调用算法组的check_abuse_pattern()函数检测滥用模式
+        3. 调用数据库组的record_report()函数保存举报记录
+      operationId: reportFile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportRequest'
+      responses:
+        '201':
+          description: 举报已受理
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 201
+                msg: 举报已受理，感谢您的反馈
+                data:
+                  reportId: 456
+                  reportedAt: "2023-12-01T10:00:00.000Z"
+
+  # 安全风险评估接口 - 供前端或后台系统调用
+  /api/security/risk-assessment:
+    post:
+      tags:
+        - 安全管理
+        - 算法服务
+      summary: 安全风险评估
+      description: |
+        对取件码、用户行为或会话进行安全风险评估。
+        此接口可由前端在敏感操作前调用，也可由后台系统定期调用。
+        
+        端口组实现此接口时需要：
+        调用算法组的assess_security_risk()函数进行风险评估
+      operationId: assessSecurityRisk
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RiskAssessmentRequest'
+      responses:
+        '200':
+          description: 评估完成
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: success
+                data:
+                  riskLevel: "MEDIUM"
+                  score: 65
+                  reasons: ["高频访问", "可疑IP段"]
+                  actions: ["增加验证", "限流"]
+
+  # 算法服务健康检查
+  /api/algorithms/health:
+    get:
+      tags:
+        - 算法服务
+      summary: 算法服务健康检查
+      description: 检查算法服务的运行状态
+      operationId: checkAlgorithmHealth
+      responses:
+        '200':
+          description: 算法服务正常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: 算法服务运行正常
+                data:
+                  status: "healthy"
+                  timestamp: "2023-12-01T10:00:00Z"
+        '503':
+          description: 算法服务异常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 503
+                msg: 算法服务暂时不可用
+                data: null
+
+components:
+  schemas:
+    # 所有接口的统一响应格式
+    StandardResponse:
+      type: object
+      required:
+        - code
+        - msg
+      properties:
+        code:
+          type: integer
+          description: HTTP状态码
+          example: 200
+        msg:
+          type: string
+          description: 状态描述信息
+          example: success
+        data:
+          type: object
+          description: 接口返回的业务数据
+          nullable: true
+
+    # 生成取件码的请求参数
+    GenerateCodeRequest:
+      type: object
+      required:
+        - fileId
+        - fileSize
+      properties:
+        fileId:
+          type: integer
+          description: 文件在数据库中的唯一ID
+          example: 123
+        fileSize:
+          type: integer
+          description: 文件大小，单位字节
+          example: 10485760
+        customLimit:
+          type: integer
+          description: 自定义下载次数限制，不传则使用默认值3次
+          minimum: 1
+          maximum: 10
+          default: 3
+          example: 3
+
+    # 网络传输指标数据格式
+    NetworkMetrics:
+      type: object
+      properties:
+        rtt:
+          type: integer
+          description: 网络往返时延，单位毫秒
+          minimum: 0
+          example: 150
+        packetLoss:
+          type: number
+          description: 丢包率，0表示无丢包，1表示完全丢包
+          minimum: 0
+          maximum: 1
+          example: 0.05
+        throughput:
+          type: integer
+          description: 当前网络吞吐量，单位字节/秒
+          minimum: 0
+          example: 1024000
+        connectionType:
+          type: string
+          description: 网络连接类型
+          enum: [direct, relay, failed]
+          example: "direct"
+
+    # 传输优化参数
+    OptimizationParams:
+      type: object
+      properties:
+        chunkSize:
+          type: integer
+          description: 建议的文件分片大小，单位字节
+          example: 262144
+        useTurnServer:
+          type: boolean
+          description: 是否建议使用TURN服务器进行中继
+          example: false
+        retryStrategy:
+          type: string
+          description: 传输失败时的重试策略
+          enum: [immediate, exponential_backoff, fixed_interval]
+          example: "exponential_backoff"
+        parallelChunks:
+          type: integer
+          description: 建议的并行传输分片数量
+          minimum: 1
+          maximum: 5
+          example: 2
+        iceTimeout:
+          type: integer
+          description: ICE连接建立的超时时间，单位毫秒
+          example: 30000
+
+    # 安全风险评估请求参数
+    RiskAssessmentRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          description: 需要评估的取件码
+          pattern: '^[A-Z0-9]{6}$'
+          example: "A1B2C3"
+        sessionId:
+          type: string
+          description: 需要评估的会话ID
+          example: "sess_abc123"
+        context:
+          type: object
+          description: 评估所需的上下文信息
+          properties:
+            requestCount:
+              type: integer
+              description: 近期请求次数
+              example: 15
+            ipAddress:
+              type: string
+              description: 客户端IP地址
+              example: "192.168.1.1"
+            userAgent:
+              type: string
+              description: 客户端浏览器信息
+              example: "Mozilla/5.0"
+            fileType:
+              type: string
+              description: 文件类型
+              example: "application/pdf"
+
+    # 安全风险评估结果
+    RiskAssessmentResult:
+      type: object
+      properties:
+        riskLevel:
+          type: string
+          description: 风险等级
+          enum: [LOW, MEDIUM, HIGH, CRITICAL]
+          example: "MEDIUM"
+        score:
+          type: integer
+          description: 风险分数，0-100，分数越高风险越大
+          minimum: 0
+          maximum: 100
+          example: 65
+        reasons:
+          type: array
+          description: 风险原因说明
+          items:
+            type: string
+          example: ["高频访问", "可疑IP段"]
+        actions:
+          type: array
+          description: 建议采取的安全措施
+          items:
+            type: string
+          example: ["增加验证", "限流"]
+
+    # WebRTC Offer创建请求
+    WebRTCOfferRequest:
+      type: object
+      required:
+        - sessionId
+        - offer
+      properties:
+        sessionId:
+          type: string
+          description: 前端生成的会话ID，用于标识本次WebRTC连接
+          example: "sess_abc123"
+        offer:
+          type: string
+          description: WebRTC SDP Offer字符串
+          example: "v=0\r\no=- 123456 2 IN IP4 127.0.0.1..."
+        senderInfo:
+          type: object
+          description: 发送方匿名信息，用于风控分析
+          properties:
+            userAgent:
+              type: string
+              description: 浏览器User-Agent
+              example: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            ipAddress:
+              type: string
+              description: 客户端IP地址（服务器端会自动获取，此字段仅供参考）
+              example: "192.168.1.100"
+
+    # WebRTC Answer提交请求
+    WebRTCAnswerRequest:
+      type: object
+      required:
+        - sessionId
+        - answer
+      properties:
+        sessionId:
+          type: string
+          description: 对应的会话ID，必须与之前创建的Offer sessionId一致
+          example: "sess_abc123"
+        answer:
+          type: string
+          description: WebRTC SDP Answer字符串
+          example: "v=0\r\no=- 654321 2 IN IP4 127.0.0.1..."
+        iceCandidates:
+          type: array
+          description: ICE候选地址列表
+          items:
+            type: object
+            properties:
+              candidate:
+                type: string
+                description: ICE候选地址字符串
+              sdpMid:
+                type: string
+                description: 媒体流标识
+              sdpMLineIndex:
+                type: integer
+                description: 媒体行索引
+
+    # 文件举报请求
+    ReportRequest:
+      type: object
+      required:
+        - code
+        - reason
+      properties:
+        code:
+          type: string
+          description: 被举报的取件码
+          pattern: '^[A-Z0-9]{6}$'
+          example: A1B2C3
+        reason:
+          type: string
+          description: 举报原因描述
+          example: "该文件包含侵权内容"
+        reporterInfo:
+          type: object
+          description: 举报者匿名信息
+          properties:
+            userAgent:
+              type: string
+              description: 举报者浏览器信息
+            ipAddress:
+              type: string
+              description: 举报者IP地址
+
+    # 算法服务健康状态响应
+    AlgorithmHealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          description: 整体健康状态
+          enum: [healthy, degraded, unhealthy]
+          example: "healthy"
+        services:
+          type: object
+          description: 各算法子服务状态
+          properties:
+            codeGenerator:
+              type: string
+              description: 取件码生成服务状态
+              example: "healthy"
+            riskAssessor:
+              type: string
+              description: 风险评估服务状态
+              example: "healthy"
+            optimizer:
+              type: string
+              description: 传输优化服务状态
+              example: "healthy"
+        timestamp:
+          type: string
+          format: date-time
+          description: 检查时间
+          example: "2023-12-01T10:00:00Z"
+
+  parameters:
+    # 取件码路径参数，多个接口共用
+    PickupCodePath:
+      name: code
+      in: path
+      required: true
+      description: 6位取件码，由大写字母和数字组成
+      schema:
+        type: string
+        pattern: '^[A-Z0-9]{6}$'
+        example: A1B2C3
+
+  responses:
+    # 通用错误响应定义
+    BadRequest:
+      description: 请求参数错误或格式不正确
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+          example:
+            code: 400
+            msg: 请求参数错误，请检查参数格式
+            data: null
+
+    NotFound:
+      description: 请求的资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+          example:
+            code: 404
+            msg: 请求的资源不存在
+            data: null
+
+    ServerError:
+      description: 服务器内部错误
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+          example:
+            code: 500
+            msg: 服务器内部错误，请稍后重试
+            data: null
+
+    # 算法服务不可用错误
+    AlgorithmServiceUnavailable:
+      description: 算法服务暂时不可用
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+          example:
+            code: 503
+            msg: 算法服务暂时不可用，已启用降级方案
+            data:
+              fallback: true
+              suggestion: "部分功能可能受限，请稍后重试"
+
+    # 频率限制错误
+    RateLimitExceeded:
+      description: 请求频率超过限制
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+          example:
+            code: 429
+            msg: 请求过于频繁，请稍后重试
+            data:
+              retryAfter: 60
+              limitType: "session_creation"
+
+security:
+  - {}  # 当前版本无需认证
+
+# 接口分组，便于文档阅读
+x-tagGroups:
+  - name: 核心功能
+    tags:
+      - 取件码管理
+      - 文件传输
+  - name: 安全与管理
+    tags:
+      - 安全管理
+      - 算法服务
+  - name: 监控与状态
+    tags:
+      - 系统状态
