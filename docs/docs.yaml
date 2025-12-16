@@ -339,19 +339,76 @@ paths:
                   iceTimeout: 30000
                   parallelChunks: 2
 
-  # 创建WebRTC连接Offer - 分享方创建连接时调用
+  # Sender注册接口 - 发送方注册等待接收方的Offer
+  /api/codes/{code}/webrtc/sender/register:
+    post:
+      tags:
+        - 文件传输
+      summary: Sender注册
+      description: |
+        发送方（Sender）向信令服务器注册，等待接收方（Receiver）的Offer。
+        信令服务器会临时存储Sender信息，当Receiver通过取件码创建Offer时，服务器会将Offer转发给已注册的Sender。
+        
+        端口组实现此接口时需要：
+        1. 调用算法组的validate_session_rate_limit()函数检查频率限制
+        2. 调用算法组的assess_connection_risk()函数评估连接风险
+        3. 临时存储Sender注册信息（内存或Redis），关联取件码
+      operationId: registerSender
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: A1B2C3
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SenderRegisterRequest'
+      responses:
+        '201':
+          description: Sender注册成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 201
+                msg: Sender注册成功，等待Offer
+                data:
+                  registeredAt: "2023-12-01T10:00:00.000Z"
+                  expiresIn: 300
+        '429':
+          description: 请求频率过高
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 429
+                msg: 注册频率过高，请稍后重试
+                data:
+                  retryAfter: 60
+
+  # 创建WebRTC连接Offer - 接收方创建连接时调用
   /api/codes/{code}/webrtc/offer:
     post:
       tags:
         - 文件传输
       summary: 创建WebRTC Offer
       description: |
-        分享方创建WebRTC连接的SDP Offer。
+        接收方（Receiver）创建WebRTC连接的SDP Offer。
+        信令服务器接收到Offer后，会查找已注册的Sender，并将Offer转发给Sender。
+        如果存在已注册的Sender，服务器会立即将Offer推送给Sender；如果不存在，Offer会被保存，等待Sender注册后获取。
         
         端口组实现此接口时需要：
         1. 调用算法组的validate_session_rate_limit()函数检查频率限制
         2. 调用算法组的assess_connection_risk()函数评估连接风险
         3. 调用数据库组的create_webrtc_offer()函数保存Offer信息
+        4. 查找已注册的Sender，如果存在则立即转发Offer
       operationId: createWebRTCOffer
       parameters:
         - name: code
@@ -380,6 +437,8 @@ paths:
                 data:
                   sessionId: "sess_abc123"
                   expiresIn: 300
+                  senderFound: true
+                  forwarded: true
         '429':
           description: 请求频率过高
           content:
@@ -392,18 +451,22 @@ paths:
                 data:
                   retryAfter: 60
 
-  # 获取WebRTC Offer - 下载方获取连接信息
+  # 获取WebRTC Offer - 发送方获取连接信息
   /api/codes/{code}/webrtc/offer/{session_id}:
     get:
       tags:
         - 文件传输
       summary: 获取WebRTC Offer
       description: |
-        下载方获取分享方创建的WebRTC Offer信息。
+        发送方（Sender）获取接收方（Receiver）创建的WebRTC Offer信息。
+        Sender通过轮询此接口来获取Receiver创建的Offer。
+        当Receiver创建Offer后，如果Sender已注册，服务器会立即将Offer推送给Sender（通过注册时的回调或WebSocket）。
+        如果Sender未注册，Sender可以通过轮询此接口获取Offer。
         
         端口组实现此接口时需要：
         1. 调用算法组的validate_offer_access()函数验证访问权限
         2. 调用数据库组的get_webrtc_offer()函数查询Offer信息
+        3. 如果Sender已注册，标记Offer已被获取
       operationId: getWebRTCOffer
       parameters:
         - name: code
@@ -453,18 +516,20 @@ paths:
                 msg: WebRTC会话不存在或已过期
                 data: null
 
-  # 提交WebRTC Answer - 下载方响应连接
+  # 提交WebRTC Answer - 发送方响应连接
   /api/codes/{code}/webrtc/answer:
     post:
       tags:
         - 文件传输
       summary: 提交WebRTC Answer
       description: |
-        下载方创建WebRTC Answer并提交给服务器。
+        发送方（Sender）创建WebRTC Answer并提交给服务器。
+        服务器保存Answer后，接收方（Receiver）可以通过Answer获取接口获取Answer。
         
         端口组实现此接口时需要：
         1. 调用算法组的validate_answer_integrity()函数验证Answer完整性
         2. 调用数据库组的update_webrtc_answer()函数保存Answer信息
+        3. 通知已注册的Receiver（如果存在），Answer已就绪
       operationId: submitWebRTCAnswer
       parameters:
         - name: code
@@ -493,6 +558,72 @@ paths:
                 data:
                   sessionId: "sess_abc123"
                   status: "answer_received"
+
+  # 获取WebRTC Answer - 接收方获取连接响应
+  /api/codes/{code}/webrtc/answer/{session_id}:
+    get:
+      tags:
+        - 文件传输
+      summary: 获取WebRTC Answer
+      description: |
+        接收方（Receiver）获取发送方（Sender）创建的WebRTC Answer。
+        Receiver通过轮询此接口来获取Sender创建的Answer。
+        当Sender创建Answer后，Receiver可以通过此接口获取Answer以完成WebRTC连接建立。
+        
+        端口组实现此接口时需要：
+        1. 调用算法组的validate_answer_access()函数验证访问权限
+        2. 调用数据库组的get_webrtc_answer()函数查询Answer信息
+      operationId: getWebRTCAnswer
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: A1B2C3
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "sess_abc123"
+      responses:
+        '200':
+          description: 获取成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: success
+                data:
+                  answer: "v=0\r\no=- 654321 2 IN IP4 127.0.0.1..."
+                  createdAt: "2023-12-01T10:00:05.000Z"
+                  status: "answer_received"
+        '403':
+          description: 访问被拒绝（风控系统拦截）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 403
+                msg: 访问被拒绝，可能存在安全风险
+                data: null
+        '404':
+          description: Answer不存在或未创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 404
+                msg: WebRTC Answer不存在或未创建
+                data:
+                  status: "offer_created"
+                  message: "等待Sender创建Answer"
 
   # 举报违规文件
   /api/reports:
@@ -757,6 +888,29 @@ components:
             type: string
           example: ["增加验证", "限流"]
 
+    # Sender注册请求
+    SenderRegisterRequest:
+      type: object
+      required: []
+      properties:
+        senderInfo:
+          type: object
+          description: 发送方匿名信息，用于风控分析
+          properties:
+            userAgent:
+              type: string
+              description: 浏览器User-Agent
+              example: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            ipAddress:
+              type: string
+              description: 客户端IP地址（服务器端会自动获取，此字段仅供参考）
+              example: "192.168.1.100"
+        callbackUrl:
+          type: string
+          description: 可选的回调URL，当Offer创建时服务器会通知此URL（如果提供）
+          format: uri
+          example: "https://sender.example.com/webrtc/offer-notification"
+
     # WebRTC Offer创建请求
     WebRTCOfferRequest:
       type: object
@@ -772,9 +926,9 @@ components:
           type: string
           description: WebRTC SDP Offer字符串
           example: "v=0\r\no=- 123456 2 IN IP4 127.0.0.1..."
-        senderInfo:
+        receiverInfo:
           type: object
-          description: 发送方匿名信息，用于风控分析
+          description: 接收方匿名信息，用于风控分析
           properties:
             userAgent:
               type: string
