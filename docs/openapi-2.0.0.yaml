@@ -1,0 +1,820 @@
+# openapi-2.0.0.yaml
+openapi: 3.0.3
+info:
+  title: 文件闪传系统API
+  description: |
+    # 文件闪传系统 API 文档（版本2.0.0）
+    
+    ## 🎯 项目概述
+    
+    基于取件码的匿名P2P文件分享系统，使用WebRTC实现点对点文件传输。
+    
+    ### 核心流程
+    1. **上传方**：生成取件码 → 等待连接
+    2. **下载方**：输入取件码 → 获取文件信息 → 建立WebRTC连接
+    3. **传输**：P2P文件传输 → 更新状态 → 传输完成
+    
+    ---
+    
+    ## 🏗️ 技术架构
+    
+    ### 前端组（客户端）
+    - **技术栈**：React/Vue + WebRTC
+    - **职责**：
+      - 用户界面和交互
+      - WebRTC连接建立和维护
+      - ICE候选的实时发送和接收
+      - 文件分块传输和进度显示
+    
+    ### 端口组（后端API）
+    - **技术栈**：FastAPI (Python 3.10+)
+    - **职责**：
+      - 实现本文档所有RESTful API接口
+      - 数据库CRUD操作
+      - 信令服务器功能
+      - 输入验证和错误处理
+    
+    ### 数据库组（数据存储）
+    - **技术栈**：MySQL 8.0+
+    - **职责**：
+      - 维护数据库表结构
+      - 确保数据一致性和完整性
+      - 提供数据查询支持
+      - 数据库迁移管理
+    
+    ### 算法组（优化算法）
+    - **技术栈**：Python/JavaScript
+    - **职责**：
+      - WebRTC连接成功率优化
+      - ICE候选收集和选择算法
+      - P2P传输性能优化
+      - 文件分块和校验算法
+    
+    ---
+    
+    ## 📊 数据库表结构（已确认）
+    
+    ### 核心表
+    1. **files** - 文件信息表
+    2. **pickup_codes** - 取件码表（主键：code VARCHAR(6) 必须大写）
+    3. **webrtc_sessions** - WebRTC会话表
+    4. **registered_senders** - 注册发送方表
+    5. **reports** - 举报记录表
+    
+    ### 关键约束
+    - 所有表都有 created_at, updated_at 字段
+    - 取件码必须6位大写字母或数字（正则：^[A-Z0-9]{6}$）
+    - webrtc_sessions 有唯一约束：code + session_id
+    
+    ---
+    
+    ## 🔧 关键技术决策
+    
+    ### 1. ICE候选传输策略
+    - **方案**：单独接口实时发送（WebRTC最佳实践）
+    - **理由**：提高连接成功率，降低延迟
+    - **接口**：
+      - POST /ice-candidate - 发送ICE候选
+      - GET /ice-candidates - 获取ICE候选列表
+    
+    ### 2. 角色定义
+    - **Receiver（接收方/下载方）**：创建Offer，获取Answer，接收文件
+    - **Sender（发送方/上传方）**：注册，获取Offer，创建Answer，发送文件
+    
+    ### 3. 数据库操作
+    - 所有接口对应具体的数据库表操作
+    - 使用SQLAlchemy ORM模型（已实现）
+    
+    ---
+    
+    ## 🛠️ 各小组需交付
+    
+    ### 端口组
+     1. 按本文档实现所有API接口
+     2. 统一的响应格式和错误处理
+     3. 数据库操作的完整实现
+     4. 输入验证和安全防护
+    
+    ### 前端组
+     1. 用户界面（上传/下载页面）
+     2. WebRTC连接管理器
+     3. ICE候选实时处理
+     4. 文件传输进度显示
+    
+    ### 数据库组
+     1. 完整的数据库表结构
+     2. 测试数据初始化脚本
+     3. 数据库迁移方案
+    
+    ### 算法组
+     1. WebRTC连接优化算法
+     2. ICE候选选择策略
+     3. 文件传输性能分析报告
+    
+    ---
+    
+    ## 📋 接口测试数据
+    
+    ### 可用取件码（数据库已存在）
+    | 取件码 | 状态 | 文件 | 使用情况 |
+    |--------|------|------|----------|
+    | WAIT01 | 等待中 | 测试文件1.pdf | 0/3 |
+    | TRAN02 | 传输中 | 测试图片.jpg | 1/3 |
+    | DONE03 | 已完成 | 测试文件1.pdf | 3/3 |
+    | EXPI04 | 已过期 | 测试图片.jpg | 1/3 |
+    | INFIN5 | 等待中 | 项目报告.pdf | 0/999 |
+    
+    ### WebRTC会话
+    - WAIT01 + sess_wait01: offer_created
+    - TRAN02 + sess_tran02: answer_received
+    
+  version: "2.0.0"
+
+servers:
+  - url: http://localhost:8000
+    description: 开发环境
+  - url: http://localhost:8000/api/v1
+    description: 带API前缀的开发环境
+
+tags:
+  - name: 系统状态
+    description: 服务健康检查
+  - name: 取件码管理
+    description: 取件码状态查询、文件信息获取、使用次数管理
+  - name: WebRTC信令
+    description: WebRTC连接的信令交换（核心功能）
+  - name: ICE候选传输
+    description: WebRTC ICE候选的实时传输（单独接口）
+  - name: 安全管理
+    description: 举报违规文件
+
+paths:
+  # ==================== 系统状态 ====================
+  /health:
+    get:
+      tags:
+        - 系统状态
+      summary: 服务健康检查
+      description: 检查API服务是否正常运行
+      operationId: checkHealth
+      responses:
+        '200':
+          description: 服务正常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: 服务运行正常
+                data:
+                  status: healthy
+                  timestamp: "2025-12-26T13:00:00.000Z"
+                  version: "2.0.0"
+
+  # ==================== 取件码管理 ====================
+  /api/v1/codes/{code}/status:
+    get:
+      tags:
+        - 取件码管理
+      summary: 查询取件码状态
+      description: 根据取件码查询文件分享状态
+      operationId: getCodeStatus
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: WAIT01
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: success
+                data:
+                  code: "WAIT01"
+                  fileName: "测试文件1.pdf"
+                  fileSize: 1048576
+                  status: "waiting"
+                  usedCount: 0
+                  limitCount: 3
+                  expireAt: "2025-12-26T14:16:09.000Z"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/codes/{code}/file-info:
+    get:
+      tags:
+        - 取件码管理
+      summary: 获取文件详细信息
+      description: 根据取件码获取文件的完整信息
+      operationId: getFileInfo
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: WAIT01
+      responses:
+        '200':
+          description: 获取成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: success
+                data:
+                  fileId: 1
+                  originalName: "测试文件1.pdf"
+                  size: 1048576
+                  mimeType: "application/pdf"
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/codes/{code}/usage:
+    post:
+      tags:
+        - 取件码管理
+      summary: 增加使用次数
+      description: 文件被成功领取时调用，增加取件码的使用次数
+      operationId: incrementUsage
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: WAIT01
+      responses:
+        '200':
+          description: 使用次数增加成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: 使用次数已更新
+                data:
+                  code: "WAIT01"
+                  usedCount: 1
+                  limitCount: 3
+                  remaining: 2
+        '400':
+          description: 已达到使用上限
+          content:
+            application/json:
+              example:
+                code: 400
+                msg: 已达到使用上限
+                data:
+                  code: "DONE03"
+                  usedCount: 3
+                  limitCount: 3
+
+  # ==================== WebRTC信令 ====================
+  /api/v1/codes/{code}/webrtc/sender/register:
+    post:
+      tags:
+        - WebRTC信令
+      summary: 发送方(Sender)注册
+      description: 发送方向信令服务器注册，准备接收Offer
+      operationId: registerSender
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: WAIT01
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SenderRegisterRequest'
+      responses:
+        '201':
+          description: Sender注册成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 201
+                msg: "Sender注册成功，等待Offer"
+                data:
+                  registeredAt: "2025-12-26T13:00:00.000Z"
+                  expiresIn: 300
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/codes/{code}/webrtc/offer:
+    post:
+      tags:
+        - WebRTC信令
+      summary: 接收方(Receiver)创建WebRTC Offer
+      description: 接收方创建WebRTC SDP Offer并存储到服务器
+      operationId: createWebRTCOffer
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: WAIT01
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebRTCOfferRequest'
+      responses:
+        '201':
+          description: Offer创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 201
+                msg: "WebRTC Offer创建成功"
+                data:
+                  sessionId: "sess_wait01"
+                  expiresIn: 300
+                  status: "offer_created"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/codes/{code}/webrtc/offer/{session_id}:
+    get:
+      tags:
+        - WebRTC信令
+      summary: 发送方(Sender)获取WebRTC Offer
+      description: 发送方获取接收方创建的WebRTC SDP Offer
+      operationId: getWebRTCOffer
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: WAIT01
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "sess_wait01"
+      responses:
+        '200':
+          description: 获取成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: "success"
+                data:
+                  offer: "v=0\r\no=- 123456 2 IN IP4 127.0.0.1..."
+                  status: "offer_created"
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/codes/{code}/webrtc/answer:
+    post:
+      tags:
+        - WebRTC信令
+      summary: 发送方(Sender)提交WebRTC Answer
+      description: |
+        发送方创建并提交WebRTC SDP Answer。
+        
+        **注意**：ICE候选应通过专门的ICE候选接口发送，此接口的iceCandidates字段仅用于传输必要的候选信息。
+      operationId: submitWebRTCAnswer
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: WAIT01
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebRTCAnswerRequest'
+      responses:
+        '200':
+          description: Answer提交成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: "WebRTC Answer提交成功"
+                data:
+                  sessionId: "sess_wait01"
+                  status: "answer_received"
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/codes/{code}/webrtc/answer/{session_id}:
+    get:
+      tags:
+        - WebRTC信令
+      summary: 接收方(Receiver)获取WebRTC Answer
+      description: 接收方获取发送方创建的WebRTC SDP Answer
+      operationId: getWebRTCAnswer
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: WAIT01
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "sess_wait01"
+      responses:
+        '200':
+          description: 获取成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: "success"
+                data:
+                  answer: "v=0\r\no=- 654321 2 IN IP4 127.0.0.1..."
+                  status: "answer_received"
+        '404':
+          description: Answer不存在或未创建
+          content:
+            application/json:
+              example:
+                code: 404
+                msg: "WebRTC Answer不存在或未创建"
+                data:
+                  status: "offer_created"
+                  message: "等待Sender创建Answer"
+
+  # ==================== ICE候选传输 ====================
+  /api/v1/codes/{code}/webrtc/ice-candidate:
+    post:
+      tags:
+        - ICE候选传输
+      summary: 发送ICE候选
+      description: |
+        发送WebRTC ICE候选信息。
+        
+        **使用场景**：
+        1. Sender在创建Answer后，实时发送收集到的ICE候选
+        2. Receiver在收到Answer后，也可以发送自己的ICE候选
+        3. 支持双向ICE候选交换
+        
+        **传输策略**：
+        - ICE候选生成后立即发送，提高连接成功率
+        - 支持多个候选的连续发送
+        - 服务器会实时转发给对方
+      operationId: sendIceCandidate
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: WAIT01
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IceCandidateRequest'
+            example:
+              sessionId: "sess_wait01"
+              candidate:
+                candidate: "candidate:1 1 UDP 2122252543 192.168.1.200 5000 typ host"
+                sdpMid: "0"
+                sdpMLineIndex: 0
+              role: "sender"  # sender或receiver
+      responses:
+        '200':
+          description: ICE候选接收成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: "ICE候选接收成功"
+                data:
+                  receivedAt: "2025-12-26T13:00:10.000Z"
+                  candidateCount: 5
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/codes/{code}/webrtc/ice-candidates/{session_id}:
+    get:
+      tags:
+        - ICE候选传输
+      summary: 获取ICE候选列表
+      description: |
+        获取对等方发送的所有ICE候选。
+        
+        **使用方式**：
+        - 轮询此接口获取最新的ICE候选
+        - 每次调用返回自上次请求后的新候选
+        - 可通过WebSocket优化（未来版本）
+      operationId: getIceCandidates
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9]{6}$'
+            example: WAIT01
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "sess_wait01"
+      responses:
+        '200':
+          description: 获取成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 200
+                msg: "success"
+                data:
+                  candidates:
+                    - candidate: "candidate:1 1 UDP 2122252543 192.168.1.200 5000 typ host"
+                      sdpMid: "0"
+                      sdpMLineIndex: 0
+                    - candidate: "candidate:2 1 UDP 1686052863 203.0.113.1 5000 typ srflx"
+                      sdpMid: "0"
+                      sdpMLineIndex: 0
+                  count: 2
+                  lastUpdated: "2025-12-26T13:00:15.000Z"
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ==================== 安全管理 ====================
+  /api/v1/reports:
+    post:
+      tags:
+        - 安全管理
+      summary: 举报违规文件
+      description: 举报违规、侵权或不当内容文件
+      operationId: reportFile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportRequest'
+      responses:
+        '201':
+          description: 举报已受理
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                code: 201
+                msg: "举报已受理，感谢您的反馈"
+                data:
+                  reportId: 1
+                  reportedAt: "2025-12-26T13:00:00.000Z"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+components:
+  schemas:
+    # 标准响应格式
+    StandardResponse:
+      type: object
+      required:
+        - code
+        - msg
+      properties:
+        code:
+          type: integer
+          description: 状态码
+          enum: [200, 201, 400, 404, 429, 500]
+          example: 200
+        msg:
+          type: string
+          description: 状态消息
+          example: success
+        data:
+          type: object
+          description: 响应数据
+          nullable: true
+
+    # Sender注册请求
+    SenderRegisterRequest:
+      type: object
+      required:
+        - senderInfo
+      properties:
+        senderInfo:
+          type: object
+          required:
+            - userAgent
+            - ipAddress
+          properties:
+            userAgent:
+              type: string
+            ipAddress:
+              type: string
+            platform:
+              type: string
+        callbackUrl:
+          type: string
+          format: uri
+
+    # WebRTC Offer请求
+    WebRTCOfferRequest:
+      type: object
+      required:
+        - sessionId
+        - offer
+      properties:
+        sessionId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        offer:
+          type: string
+          minLength: 1
+        receiverInfo:
+          type: object
+          properties:
+            userAgent:
+              type: string
+            ipAddress:
+              type: string
+
+    # WebRTC Answer请求
+    WebRTCAnswerRequest:
+      type: object
+      required:
+        - sessionId
+        - answer
+      properties:
+        sessionId:
+          type: string
+        answer:
+          type: string
+        iceCandidates:
+          type: array
+          description: |
+            初始ICE候选信息（可选）。
+            
+            **注意**：完整的ICE候选应通过专门的ICE候选接口发送。
+            此处仅用于传输必要的初始候选。
+          items:
+            type: object
+            properties:
+              candidate:
+                type: string
+              sdpMid:
+                type: string
+              sdpMLineIndex:
+                type: integer
+
+    # ICE候选请求
+    IceCandidateRequest:
+      type: object
+      required:
+        - sessionId
+        - candidate
+      properties:
+        sessionId:
+          type: string
+          description: 会话ID
+        candidate:
+          type: object
+          description: ICE候选对象
+          required:
+            - candidate
+          properties:
+            candidate:
+              type: string
+              description: ICE候选字符串
+            sdpMid:
+              type: string
+              description: SDP媒体标识
+            sdpMLineIndex:
+              type: integer
+              description: SDP媒体行索引
+        role:
+          type: string
+          description: 发送方角色
+          enum: [sender, receiver]
+          default: sender
+
+    # 举报请求
+    ReportRequest:
+      type: object
+      required:
+        - code
+        - reason
+      properties:
+        code:
+          type: string
+          pattern: '^[A-Z0-9]{6}$'
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+        reporterInfo:
+          type: object
+          properties:
+            userAgent:
+              type: string
+            ipAddress:
+              type: string
+
+  responses:
+    BadRequest:
+      description: 请求参数错误
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+          example:
+            code: 400
+            msg: 请求参数错误
+            data: null
+
+    NotFound:
+      description: 资源未找到
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+          example:
+            code: 404
+            msg: 资源不存在
+            data: null
+
+    ServerError:
+      description: 服务器内部错误
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+          example:
+            code: 500
+            msg: 服务器内部错误
+            data: null
+
+    RateLimit:
+      description: 请求频率超限
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+          example:
+            code: 429
+            msg: 请求过于频繁，请稍后再试
+            data:
+              retryAfter: 60
+
+# 安全定义（当前版本无需认证）
+security: []
