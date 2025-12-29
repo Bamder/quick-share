@@ -3,7 +3,8 @@
  * 负责接收receiver的offer，创建answer，建立连接，并发送文件
  */
 
-import { generateSessionId, splitFileIntoChunks } from '../util/file-tool.js';
+import { splitFileIntoChunks } from '../utils/file-utils.js';
+import { generateSessionId } from '../utils/common-utils.js';
 
 class SenderService {
   constructor() {

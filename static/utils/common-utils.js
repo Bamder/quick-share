@@ -1,43 +1,7 @@
 /**
- * QuickShare 通用工具函数
- * 所有页面通用的工具方法放在这里
+ * 通用工具函数
+ * 负责 UI、验证、存储、网络、日期时间等通用功能
  */
-
-// ========== 文件处理工具 ==========
-
-/**
- * 格式化文件大小
- * @param {number} bytes 文件大小（字节）
- * @returns {string} 格式化后的文件大小
- */
-export function formatFileSize(bytes) {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
-
-/**
- * 根据文件扩展名获取图标
- * @param {string} filename 文件名
- * @returns {string} 对应的emoji图标
- */
-export function getFileIcon(filename) {
-    const ext = filename.split('.').pop().toLowerCase();
-    const icons = {
-        pdf: '📕', doc: '📄', docx: '📄', txt: '📝',
-        xls: '📊', xlsx: '📊', ppt: '📽️', pptx: '📽️',
-        zip: '📦', rar: '📦', '7z': '📦', tar: '📦',
-        mp3: '🎵', wav: '🎵', flac: '🎵',
-        mp4: '🎬', avi: '🎬', mov: '🎬', mkv: '🎬',
-        jpg: '🖼️', jpeg: '🖼️', png: '🖼️', gif: '🖼️',
-        svg: '🖼️', webp: '🖼️',
-        exe: '⚙️', msi: '⚙️',
-        dmg: '💿', iso: '💿'
-    };
-    return icons[ext] || '📁';
-}
 
 // ========== UI 工具 ==========
 
@@ -98,7 +62,7 @@ export function showMessage(message, type = 'info', duration = 3000) {
 }
 
 /**
- * 加载动画
+ * 显示/隐藏加载动画
  * @param {boolean} show 是否显示
  * @param {string} text 加载文字
  */
@@ -188,6 +152,14 @@ export function generatePickupCode() {
     ).join('');
 }
 
+/**
+ * 生成唯一会话ID（用于 WebRTC 会话标识）
+ * @returns {string} 会话ID
+ */
+export function generateSessionId() {
+    return 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+}
+
 // ========== 日期时间工具 ==========
 
 /**
@@ -249,7 +221,7 @@ export function clearStorage() {
     const keys = [];
     for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
-        if (key.startsWith('quickshare_')) {
+        if (key && key.startsWith('quickshare_')) {
             keys.push(key);
         }
     }
@@ -297,3 +269,4 @@ export function fetchWithTimeout(url, options = {}, timeout = 10000) {
         )
     ]);
 }
+
