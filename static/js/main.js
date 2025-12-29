@@ -3,16 +3,15 @@
  */
 
 // 导入工具函数
+import { formatFileSize, getFileIcon } from '/static/utils/file-utils.js';
 import {
-    formatFileSize,
-    getFileIcon,
     showMessage,
     showLoading,
     isValidPickupCode,
     generatePickupCode,
     formatRemainingTime,
     testPortConnection
-} from '/static/utils/utils.js';
+} from '/static/utils/common-utils.js';
 
 // 配置信息
 const CONFIG = {

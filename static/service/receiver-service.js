@@ -3,7 +3,8 @@
  * 负责创建SDP offer，发送到信令服务器，等待并处理sender的answer
  */
 
-import { generateSessionId, formatFileSize } from '../util/file-tool.js';
+import { formatFileSize } from '../utils/file-utils.js';
+import { generateSessionId } from '../utils/common-utils.js';
 
 class ReceiverService {
   constructor() {
