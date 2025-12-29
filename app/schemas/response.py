@@ -66,3 +66,15 @@ class IceCandidateResponse(BaseModel):
     sdpMid: Optional[str] = None
     sdpMLineIndex: Optional[int] = None
     createdAt: datetime
+
+
+class CreateCodeResponse(BaseModel):
+    """创建取件码响应模型"""
+    code: str
+    fileId: int
+    fileName: str
+    fileSize: int
+    mimeType: Optional[str] = None
+    limitCount: int
+    expireAt: datetime
+    createdAt: datetime
