@@ -351,13 +351,118 @@ async function initializeSenderService() {
         await senderService.registerSender(CONFIG.pickupCode);
         console.log('Sender注册成功，等待Receiver连接...');
         
-        // 开始等待 Offer（这里需要知道 sessionId，实际应该通过其他方式获取）
-        // 注意：根据当前架构，Sender需要知道Receiver创建的sessionId
-        // 这里暂时不自动等待，等待后续优化
+        // 开始自动等待 Offer
+        startWaitingForOffer();
         
     } catch (error) {
         console.error('初始化SenderService失败:', error);
         showMessage(`初始化发送服务失败: ${error.message}`, 'error');
+    }
+}
+
+// ========== 自动等待 Offer ==========
+async function startWaitingForOffer() {
+    if (!CONFIG.API_BASE || !CONFIG.pickupCode || !CONFIG.localFile) {
+        return;
+    }
+    
+    console.log('开始轮询等待Receiver的Offer...');
+    showMessage('等待接收方连接...', 'info');
+    
+    const maxAttempts = 120; // 最多等待2分钟（120次 * 1秒）
+    const interval = 1000; // 每秒查询一次
+    
+    for (let i = 0; i < maxAttempts; i++) {
+        try {
+            // 查询活跃的会话列表
+            const response = await fetch(
+                `${CONFIG.API_BASE}/v1/codes/${CONFIG.pickupCode}/webrtc/sessions?status=offer_created`
+            );
+            
+            if (response.ok) {
+                const result = await response.json();
+                
+                if (result.code === 200 && result.data && result.data.sessions) {
+                    const sessions = result.data.sessions;
+                    
+                    // 查找有 Offer 且未过期的会话
+                    const activeSession = sessions.find(s => 
+                        s.hasOffer && 
+                        !s.isExpired && 
+                        s.status === 'offer_created'
+                    );
+                    
+                    if (activeSession) {
+                        console.log('找到活跃会话:', activeSession.sessionId);
+                        showMessage('发现接收方连接，正在建立连接...', 'info');
+                        
+                        // 获取 Offer 并创建 Answer
+                        await handleReceiverOffer(activeSession.sessionId);
+                        return; // 成功，退出轮询
+                    }
+                }
+            }
+            
+            // 等待后继续轮询
+            await new Promise(resolve => setTimeout(resolve, interval));
+            
+            // 每10次显示一次进度
+            if (i % 10 === 0 && i > 0) {
+                console.log(`等待中... (${i}/${maxAttempts})`);
+            }
+            
+        } catch (error) {
+            console.error(`轮询会话列表失败 (尝试 ${i + 1}/${maxAttempts}):`, error);
+            await new Promise(resolve => setTimeout(resolve, interval));
+        }
+    }
+    
+    // 超时
+    console.warn('等待Offer超时');
+    showMessage('等待接收方连接超时，请检查取件码是否正确分享', 'warning');
+}
+
+// ========== 处理 Receiver 的 Offer ==========
+async function handleReceiverOffer(sessionId) {
+    try {
+        // 使用 SenderService 获取 Offer 并创建 Answer
+        const offer = await senderService.waitForOffer(sessionId, 10, 500); // 最多等待5秒
+        
+        // 接收 Offer 并创建 Answer
+        await senderService.receiveOfferAndCreateAnswer(
+            CONFIG.pickupCode,
+            sessionId,
+            offer
+        );
+        
+        console.log('Answer已创建，等待连接建立...');
+        showMessage('连接已建立，准备发送文件...', 'info');
+        
+        // 等待数据通道打开后自动发送文件
+        const originalOnDataChannelOpen = senderService.onDataChannelOpen;
+        senderService.onDataChannelOpen = () => {
+            // 调用原始回调
+            if (originalOnDataChannelOpen) {
+                originalOnDataChannelOpen();
+            }
+            
+            // 数据通道打开后，自动开始发送文件
+            if (CONFIG.localFile) {
+                console.log('数据通道已打开，开始发送文件...');
+                senderService.startSendingFile(CONFIG.localFile)
+                    .then(() => {
+                        console.log('文件发送完成');
+                    })
+                    .catch((error) => {
+                        console.error('文件发送失败:', error);
+                        showMessage(`文件发送失败: ${error.message}`, 'error');
+                    });
+            }
+        };
+        
+    } catch (error) {
+        console.error('处理Offer失败:', error);
+        showMessage(`连接失败: ${error.message}`, 'error');
     }
 }
 
