@@ -422,6 +422,64 @@ async def get_ice_candidates(
     })
 
 
+@router.get("/codes/{code}/webrtc/sessions")
+async def get_webrtc_sessions(
+    code: str,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    获取取件码的所有WebRTC会话列表
+    
+    参数：
+    - code: 取件码
+    - status: 可选，过滤状态（pending, offer_created, answer_received, connected, failed, closed）
+    
+    返回：
+    - 会话列表
+    """
+    if not validate_pickup_code(code):
+        return bad_request_response(msg="取件码格式错误")
+    
+    # 查询会话
+    query = db.query(WebRTCSession).filter(WebRTCSession.code == code)
+    
+    # 如果指定了状态，进行过滤
+    if status:
+        valid_statuses = ["pending", "offer_created", "answer_received", "connected", "failed", "closed"]
+        if status in valid_statuses:
+            query = query.filter(WebRTCSession.status == status)
+    
+    # 只返回未过期的会话（创建后5分钟内）
+    five_minutes_ago = datetime.utcnow() - timedelta(minutes=5)
+    query = query.filter(WebRTCSession.created_at > five_minutes_ago)
+    
+    # 按创建时间倒序排列
+    sessions = query.order_by(WebRTCSession.created_at.desc()).all()
+    
+    # 构建响应数据
+    sessions_data = []
+    for session in sessions:
+        expires_at = session.created_at + timedelta(minutes=5)
+        is_expired = datetime.utcnow() > expires_at
+        
+        sessions_data.append({
+            "sessionId": session.session_id,
+            "status": session.status,
+            "createdAt": session.created_at.isoformat() + "Z",
+            "updatedAt": session.updated_at.isoformat() + "Z" if session.updated_at else None,
+            "expiresAt": expires_at.isoformat() + "Z",
+            "isExpired": is_expired,
+            "hasOffer": session.offer is not None,
+            "hasAnswer": session.answer is not None
+        })
+    
+    return success_response(data={
+        "sessions": sessions_data,
+        "totalCount": len(sessions_data)
+    })
+
+
 @router.get("/codes/{code}/webrtc/session/{session_id}/status")
 async def get_session_status(
     code: str,
