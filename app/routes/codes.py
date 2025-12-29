@@ -1,13 +1,106 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
-from app.utils.response import success_response, not_found_response, bad_request_response
+from datetime import datetime, timedelta
+import uuid
+from app.utils.response import success_response, not_found_response, bad_request_response, created_response
 from app.utils.validation import validate_pickup_code
+from app.utils.pickup_code import generate_unique_pickup_code
 from app.extensions import get_db
 from app.models.pickup_code import PickupCode
 from app.models.file import File
-from app.schemas.response import PickupCodeStatusResponse, FileInfoResponse, UsageUpdateResponse
+from app.schemas.request import CreateCodeRequest
+from app.schemas.response import PickupCodeStatusResponse, FileInfoResponse, UsageUpdateResponse, CreateCodeResponse
 
 router = APIRouter(tags=["取件码管理"], prefix="/codes")
+
+
+@router.post("", status_code=201)
+async def create_code(
+    request_data: CreateCodeRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    创建文件元数据对象和取件码
+    
+    参数：
+    - request_data: 文件元数据信息
+    - request: FastAPI 请求对象（用于获取客户端IP）
+    
+    返回：
+    - 创建的取件码信息
+    """
+    try:
+        # 1. 生成 UUID 作为存储文件名
+        stored_name = str(uuid.uuid4())
+        
+        # 2. 获取客户端 IP 地址
+        client_ip = request.client.host if request.client else None
+        # 如果通过代理，尝试从 X-Forwarded-For 获取真实 IP
+        if "x-forwarded-for" in request.headers:
+            client_ip = request.headers["x-forwarded-for"].split(",")[0].strip()
+        
+        # 3. 计算过期时间
+        expire_hours = request_data.expireHours or 24
+        expire_at = datetime.utcnow() + timedelta(hours=expire_hours)
+        
+        # 4. 创建数据库表 files 记录
+        file_record = File(
+            original_name=request_data.originalName,
+            stored_name=stored_name,
+            size=request_data.size,
+            hash=request_data.hash,
+            mime_type=request_data.mimeType
+        )
+        db.add(file_record)
+        db.flush()  # 获取 file_id，但不提交事务
+        
+        # 5. 生成唯一取件码
+        pickup_code = generate_unique_pickup_code(db)
+        
+        # 6. 创建数据库表 pickup_codes 记录
+        limit_count = request_data.limitCount if request_data.limitCount else 3
+        pickup_code_record = PickupCode(
+            code=pickup_code,
+            file_id=file_record.id,
+            status="waiting",
+            used_count=0,
+            limit_count=limit_count,
+            uploader_ip=client_ip,
+            expire_at=expire_at
+        )
+        db.add(pickup_code_record)
+        
+        # 7. 提交事务
+        db.commit()
+        db.refresh(file_record)
+        db.refresh(pickup_code_record)
+        
+        # 8. 构建响应数据
+        response_data = CreateCodeResponse(
+            code=pickup_code_record.code,
+            fileId=file_record.id,
+            fileName=file_record.original_name,
+            fileSize=file_record.size,
+            mimeType=file_record.mime_type,
+            limitCount=pickup_code_record.limit_count,
+            expireAt=pickup_code_record.expire_at,
+            createdAt=pickup_code_record.created_at
+        )
+        
+        return created_response(
+            msg="取件码创建成功",
+            data=response_data
+        )
+        
+    except RuntimeError as e:
+        # 取件码生成失败
+        db.rollback()
+        return bad_request_response(msg=str(e))
+    except Exception as e:
+        # 其他错误
+        db.rollback()
+        return bad_request_response(msg=f"创建取件码失败: {str(e)}")
 
 
 @router.get("/{code}/status")
