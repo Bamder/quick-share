@@ -238,7 +238,8 @@ export function clearStorage() {
  */
 export async function testPortConnection(host, port) {
     try {
-        const url = `http://${host}:${port}/api/status`;
+        // 使用健康检查端点
+        const url = `http://${host}:${port}/health`;
         const response = await fetch(url, {
             method: 'GET',
             mode: 'cors',

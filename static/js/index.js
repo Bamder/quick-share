@@ -868,7 +868,7 @@ function addBackButton() {
     const footer = document.querySelector('.app-footer');
     if (footer) {
         const backLink = document.createElement('a');
-        backLink.href = '../pages/welcome.html';
+        backLink.href = '/static/pages/welcome.html';
         backLink.textContent = '← 返回欢迎页';
         backLink.style.cssText = `
             display: inline-block;
