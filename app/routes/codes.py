@@ -1,7 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 import uuid
+import logging
 from app.utils.response import success_response, not_found_response, bad_request_response, created_response
 from app.utils.validation import validate_pickup_code
 from app.utils.pickup_code import generate_unique_pickup_code
@@ -10,6 +13,8 @@ from app.models.pickup_code import PickupCode
 from app.models.file import File
 from app.schemas.request import CreateCodeRequest
 from app.schemas.response import PickupCodeStatusResponse, FileInfoResponse, UsageUpdateResponse, CreateCodeResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["取件码管理"], prefix="/codes")
 
@@ -30,6 +35,13 @@ async def create_code(
     返回：
     - 创建的取件码信息
     """
+    # 验证请求数据（Pydantic 会自动验证，这里只是记录日志）
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"创建取件码请求: originalName={request_data.originalName}, size={request_data.size}, "
+                f"mimeType={request_data.mimeType}, limitCount={request_data.limitCount}, "
+                f"expireHours={request_data.expireHours}")
+    
     try:
         # 1. 生成 UUID 作为存储文件名
         stored_name = str(uuid.uuid4())
