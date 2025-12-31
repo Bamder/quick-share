@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>QuickShare - 文件传输</title>
-    <link rel="stylesheet" href="/static/css/index.css">
+    <link rel="stylesheet" href="/static/common-style/common.css">
+    <link rel="stylesheet" href="/static/pages/index/index.css">
+    <link rel="stylesheet" href="/static/components/modal/modal.css">
     <style>
         /* 主页特有样式补充 */
         .back-button {
@@ -35,7 +37,7 @@
 </head>
 <body>
     <!-- 返回按钮 -->
-    <a href="/static/pages/welcome.html" class="back-button">
+    <a href="/static/pages/welcome/welcome.html" class="back-button">
         ← 返回首页
     </a>
     
@@ -119,65 +121,7 @@
                 </section>
             </div>
 
-            <!-- 右侧：辅助功能 -->
-            <div class="secondary-section">
-                <!-- 取件码状态 -->
-                <section class="card code-section" id="codeSec" style="display:none">
-                    <h2><i class="icon-code"></i> 取件码状态</h2>
-                    <div class="code-display">
-                        <div class="code-value" id="pickupCode">XXXXXX</div>
-                        <button id="copyCodeBtn" class="btn btn-secondary">
-                            <i class="icon-copy"></i> 复制
-                        </button>
-                    </div>
-                    <div class="code-status">
-                        <div class="status-item">
-                            <span class="status-label">剩余时间：</span>
-                            <span class="status-value" id="statTime">30:00</span>
-                        </div>
-                        <div class="status-item">
-                            <span class="status-label">文件大小：</span>
-                            <span class="status-value" id="statSize">0 MB</span>
-                        </div>
-                        <div class="status-item">
-                            <span class="status-label">领取状态：</span>
-                            <span class="status-value" id="statCount">0/3</span>
-                        </div>
-                        <div class="status-item">
-                            <span class="status-label">当前状态：</span>
-                            <span class="status-value" id="statStatus">等待中</span>
-                        </div>
-                    </div>
-                    <button id="reportBtn" class="btn btn-warning">
-                        <i class="icon-report"></i> 举报文件
-                    </button>
-                </section>
-
-                <!-- 连接设置 -->
-                <section class="card config-section">
-                    <h2><i class="icon-settings"></i> 连接设置</h2>
-                    <div class="config-form">
-                        <div class="input-group">
-                            <label>后端端口：</label>
-                            <input type="number" id="portInput" value="8000" min="1" max="65535">
-                        </div>
-                        <button id="testBtn" class="btn btn-secondary">
-                            <i class="icon-test"></i> 测试连接
-                        </button>
-                        <div class="test-result" id="portResult">
-                            <i class="icon-info"></i> 点击测试按钮检查连接
-                        </div>
-                    </div>
-                    <div class="config-tips">
-                        <h3><i class="icon-tip"></i> 使用提示</h3>
-                        <ul>
-                            <li>确保后端服务已启动</li>
-                            <li>默认端口为8000</li>
-                            <li>连接成功后才能正常使用</li>
-                        </ul>
-                    </div>
-                </section>
-            </div>
+            <!-- 右侧：辅助功能（已移除，改为弹窗） -->
         </main>
 
         <!-- 底部信息 -->
@@ -186,7 +130,9 @@
         </footer>
     </div>
 
+    <!-- 弹窗组件将通过 modal.js 动态加载 -->
+
     <!-- 使用module方式引入JS -->
-    <script type="module" src="/static/js/index.js"></script>
+    <script type="module" src="/static/pages/index/index.js"></script>
 </body>
 </html>

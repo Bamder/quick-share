@@ -135,7 +135,7 @@ function performPageTransition(button) {
     
     // 跳转到主页面
     setTimeout(() => {
-        const mainPagePath = '/static/pages/index.html';
+        const mainPagePath = '/static/pages/index/index.html';
         console.log(`📍 跳转路径: ${mainPagePath}`);
         
         // 尝试跳转
@@ -421,7 +421,7 @@ function createFallbackButton() {
     `;
     
     fallbackButton.addEventListener('click', function() {
-        window.location.href = '/static/pages/index.html';
+        window.location.href = '/static/pages/index/index.html';
     });
     
     document.body.appendChild(fallbackButton);
