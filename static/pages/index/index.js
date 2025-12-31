@@ -32,7 +32,17 @@ const senderService = importedSenderService;
 const receiverService = importedReceiverService;
 
 // ========== 初始化函数 ==========
-document.addEventListener('DOMContentLoaded', function() {
+// 导入弹窗模块
+import { loadModalHTML, openModal, closeModal, initModalEvents } from '/static/components/modal/modal.js';
+
+// 导出 openModal 供其他模块使用
+export { openModal, closeModal };
+
+document.addEventListener('DOMContentLoaded', async function() {
+    // 先加载弹窗HTML
+    await loadModalHTML();
+    
+    // 然后初始化其他功能
     initEventListeners();
     autoTestPort();
     restorePreviousState();
@@ -54,6 +64,8 @@ function initEventListeners() {
     document.getElementById('receiveBtn').onclick = receiveFile;
     document.getElementById('reportBtn').onclick = reportFile;
     document.getElementById('testBtn').onclick = testPortConnectionHandler;
+    
+    // 注意：弹窗事件已在 modal.js 中初始化，这里不需要重复绑定
     
     // 输入框事件
     const inputCode = document.getElementById('inputCode');
@@ -157,14 +169,78 @@ async function generatePickupCodeHandler() {
     showLoading(true, '正在创建取件码...');
     
     try {
+        // 验证文件大小
+        if (!CONFIG.localFile.size || CONFIG.localFile.size <= 0) {
+            showMessage('文件大小无效，请选择有效的文件', 'error');
+            showLoading(false);
+            if (shareBtn) {
+                shareBtn.disabled = false;
+                shareBtn.innerHTML = '<i class="icon-generate"></i> 生成取件码';
+            }
+            return;
+        }
+        
+        // 验证文件名
+        if (!CONFIG.localFile.name || CONFIG.localFile.name.trim() === '') {
+            showMessage('文件名无效，请选择有效的文件', 'error');
+            showLoading(false);
+            if (shareBtn) {
+                shareBtn.disabled = false;
+                shareBtn.innerHTML = '<i class="icon-generate"></i> 生成取件码';
+            }
+            return;
+        }
+        
         // 获取配置选项
         const expireSelect = document.getElementById('expireSelect');
         const limitSelect = document.getElementById('limitSelect');
-        const expireHours = expireSelect ? parseInt(expireSelect.value) / 60 : 24; // 转换为小时
-        const limitCount = limitSelect ? parseInt(limitSelect.value) : 3;
+        
+        // 处理过期时间：前端是分钟，后端需要小时
+        const expireMinutes = expireSelect ? parseInt(expireSelect.value) || 1440 : 1440; // 默认1440分钟 = 24小时
+        // 转换为小时，至少1小时（如果小于60分钟，也设为1小时）
+        // 先计算小时数，然后向上取整，最后转换为整数
+        const expireHoursRaw = expireMinutes / 60;
+        const expireHours = Math.max(1, Math.ceil(expireHoursRaw)); // 向上取整，至少1小时
+        const expireHoursInt = Number.isInteger(expireHours) ? expireHours : Math.floor(expireHours); // 确保是整数
+        
+        // 确保 limitCount 在有效范围内
+        const limitCountRaw = limitSelect ? parseInt(limitSelect.value) || 3 : 3;
+        const limitCount = Math.max(1, Math.min(999, limitCountRaw)); // 限制在 1-999 之间
+        
+        console.log('配置选项:', { 
+            expireMinutes, 
+            expireHoursRaw, 
+            expireHours, 
+            expireHoursInt, 
+            limitCount,
+            '验证expireHoursInt类型': typeof expireHoursInt
+        });
         
         // 计算文件哈希（可选，这里先不实现）
         // const fileHash = await calculateFileHash(CONFIG.localFile);
+        
+        // 准备请求数据（确保所有数字都是整数）
+        const requestData = {
+            originalName: CONFIG.localFile.name.trim(),
+            size: Number.isInteger(CONFIG.localFile.size) ? CONFIG.localFile.size : Math.floor(CONFIG.localFile.size), // 确保是整数
+            limitCount: Number.isInteger(limitCount) ? limitCount : Math.floor(limitCount), // 确保是整数
+            expireHours: expireHoursInt // 使用计算好的整数
+        };
+        
+        // 验证数据类型
+        console.log('请求数据类型验证:', {
+            size: { value: requestData.size, type: typeof requestData.size, isInteger: Number.isInteger(requestData.size) },
+            limitCount: { value: requestData.limitCount, type: typeof requestData.limitCount, isInteger: Number.isInteger(requestData.limitCount) },
+            expireHours: { value: requestData.expireHours, type: typeof requestData.expireHours, isInteger: Number.isInteger(requestData.expireHours) }
+        });
+        
+        // 可选字段：只在有值时才添加
+        if (CONFIG.localFile.type && CONFIG.localFile.type.trim() !== '') {
+            requestData.mimeType = CONFIG.localFile.type.trim();
+        }
+        // hash 暂时不计算，不添加到请求中（使用默认值 null）
+        
+        console.log('发送创建取件码请求:', requestData);
         
         // 调用后端 API 创建文件和取件码
         const response = await fetch(`${CONFIG.API_BASE}/v1/codes`, {
@@ -172,18 +248,37 @@ async function generatePickupCodeHandler() {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-                originalName: CONFIG.localFile.name,
-                size: CONFIG.localFile.size,
-                mimeType: CONFIG.localFile.type || null,
-                hash: null, // 可选，暂时不计算
-                limitCount: limitCount,
-                expireHours: expireHours
-            })
+            body: JSON.stringify(requestData)
         });
         
         if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
+            let errorData = {};
+            try {
+                errorData = await response.json();
+                console.error('API 错误响应:', errorData);
+            } catch (e) {
+                console.error('解析错误响应失败:', e);
+            }
+            
+            // 422 错误通常是验证错误，显示详细错误信息
+            if (response.status === 422) {
+                console.error('请求数据:', requestData);
+                console.error('错误详情:', errorData);
+                
+                let errorMessage = '数据验证失败';
+                if (errorData.detail && Array.isArray(errorData.detail)) {
+                    const errorMessages = errorData.detail.map(err => {
+                        const field = err.field || err.loc?.join('.') || '未知字段';
+                        return `${field}: ${err.message || err.msg || '验证失败'}`;
+                    }).join('; ');
+                    errorMessage = `数据验证失败: ${errorMessages}`;
+                } else if (errorData.msg) {
+                    errorMessage = errorData.msg;
+                }
+                
+                throw new Error(errorMessage);
+            }
+            
             throw new Error(errorData.msg || `HTTP ${response.status}: ${response.statusText}`);
         }
         
@@ -198,16 +293,13 @@ async function generatePickupCodeHandler() {
         CONFIG.fileName = result.data.fileName;
         CONFIG.fileSize = result.data.fileSize;
         
-        // 显示取件码区域
-        const codeSection = document.getElementById('codeSec');
+        // 更新取件码显示并打开弹窗
         const pickupCodeElement = document.getElementById('pickupCode');
         
-        if (codeSection && pickupCodeElement) {
+        if (pickupCodeElement) {
             pickupCodeElement.textContent = CONFIG.pickupCode;
-            codeSection.style.display = 'block';
-            
-            // 滚动到取件码区域（移动端优化）
-            codeSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            // 打开取件码弹窗
+            openModal('codeModal');
         }
         
         // 初始化 SenderService 并注册
@@ -297,6 +389,14 @@ async function receiveFile() {
         if (!fileInfo) {
             throw new Error('无法获取文件信息');
         }
+        
+        // 更新状态显示（包括剩余时间）
+        if (fileInfo) {
+            updateStatusDisplayFromServer(fileInfo);
+        }
+        
+        // 开始轮询状态（接收方也需要显示剩余时间）
+        startStatusPolling();
         
         // 初始化 ReceiverService
         await initializeReceiverService(code, fileInfo);
@@ -657,6 +757,10 @@ async function updateStatusFromServer() {
 }
 
 // ========== 从服务器数据更新状态显示 ==========
+// 存储过期时间，用于实时倒计时
+let CONFIG_EXPIRE_TIME = null;
+let CONFIG_COUNTDOWN_INTERVAL = null;
+
 function updateStatusDisplayFromServer(data) {
     const timeElement = document.getElementById('statTime');
     const sizeElement = document.getElementById('statSize');
@@ -665,25 +769,64 @@ function updateStatusDisplayFromServer(data) {
     
     // 更新剩余时间
     if (timeElement && data.expireAt) {
-        const expireTime = new Date(data.expireAt);
-        const now = new Date();
-        const diff = expireTime - now;
-        
-        if (diff > 0) {
-            const minutes = Math.floor(diff / 60000);
-            const seconds = Math.floor((diff % 60000) / 1000);
-            timeElement.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        // 解析过期时间（支持 ISO 8601 格式，处理时区）
+        let expireTime;
+        try {
+            console.log('[倒计时] 收到过期时间:', data.expireAt, '类型:', typeof data.expireAt);
             
-            // 少于5分钟变红色
-            if (minutes < 5) {
-                timeElement.style.color = '#f72585';
-            } else {
-                timeElement.style.color = '';
+            // 处理时区问题：
+            // 如果后端返回的时间没有时区标识（如 "2025-12-31T07:06:56"），
+            // 我们需要假设它是 UTC 时间，因为后端使用的是 datetime.utcnow()
+            let expireAtStr = String(data.expireAt);
+            
+            // 如果字符串没有时区标识（没有 Z 或 +/-），添加 Z 表示 UTC
+            if (!expireAtStr.includes('Z') && !expireAtStr.match(/[+-]\d{2}:\d{2}$/)) {
+                // 如果格式是 "YYYY-MM-DDTHH:mm:ss"，添加 "Z"
+                if (expireAtStr.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/)) {
+                    expireAtStr = expireAtStr + 'Z';
+                    console.log('[倒计时] 添加 UTC 时区标识:', expireAtStr);
+                }
             }
-        } else {
-            timeElement.textContent = '00:00';
-            timeElement.style.color = '#f72585';
+            
+            expireTime = new Date(expireAtStr);
+            
+            console.log('[倒计时] 解析后的时间对象:', expireTime);
+            console.log('[倒计时] 时间戳:', expireTime.getTime());
+            console.log('[倒计时] UTC 时间:', expireTime.toUTCString());
+            console.log('[倒计时] 本地时间:', expireTime.toLocaleString());
+            
+            // 验证日期是否有效
+            if (isNaN(expireTime.getTime())) {
+                console.warn('[倒计时] 无效的过期时间:', data.expireAt);
+                timeElement.textContent = '--:--';
+                return;
+            }
+            
+            // 保存过期时间，用于实时倒计时
+            CONFIG_EXPIRE_TIME = expireTime;
+            console.log('[倒计时] 已保存过期时间:', CONFIG_EXPIRE_TIME);
+            
+            // 如果倒计时定时器不存在，启动它
+            if (!CONFIG_COUNTDOWN_INTERVAL) {
+                console.log('[倒计时] 启动倒计时定时器');
+                startCountdown();
+            } else {
+                console.log('[倒计时] 倒计时定时器已存在，跳过启动');
+            }
+            
+            // 立即更新一次
+            console.log('[倒计时] 立即更新一次显示');
+            updateCountdown();
+        } catch (error) {
+            console.error('[倒计时] 解析过期时间失败:', error, data.expireAt);
+            timeElement.textContent = '--:--';
         }
+    } else {
+        console.warn('[倒计时] 缺少必要数据:', {
+            hasTimeElement: !!timeElement,
+            hasExpireAt: !!data.expireAt,
+            expireAt: data.expireAt
+        });
     }
     
     // 更新文件大小
@@ -718,6 +861,90 @@ function updateStatusDisplayFromServer(data) {
             statusElement.style.color = '#6c757d';
         }
     }
+}
+
+// ========== 实时倒计时 ==========
+function startCountdown() {
+    // 如果已有定时器，先清除
+    if (CONFIG_COUNTDOWN_INTERVAL) {
+        console.log('[倒计时] 清除旧的定时器');
+        clearInterval(CONFIG_COUNTDOWN_INTERVAL);
+    }
+    
+    console.log('[倒计时] 创建新的倒计时定时器');
+    // 每秒更新一次倒计时
+    CONFIG_COUNTDOWN_INTERVAL = setInterval(() => {
+        updateCountdown();
+    }, 1000);
+    
+    console.log('[倒计时] 定时器ID:', CONFIG_COUNTDOWN_INTERVAL);
+}
+
+function updateCountdown() {
+    const timeElement = document.getElementById('statTime');
+    
+    if (!timeElement) {
+        console.warn('[倒计时] 找不到时间显示元素 #statTime');
+        return;
+    }
+    
+    if (!CONFIG_EXPIRE_TIME) {
+        console.warn('[倒计时] 过期时间未设置');
+        return;
+    }
+    
+    const now = new Date();
+    const expireTimestamp = CONFIG_EXPIRE_TIME.getTime();
+    const nowTimestamp = now.getTime();
+    const diff = expireTimestamp - nowTimestamp;
+    
+    // 只在第一次或每10秒记录一次详细日志（避免日志过多）
+    if (!updateCountdown._lastLogTime || (nowTimestamp - updateCountdown._lastLogTime) > 10000) {
+        console.log('[倒计时] 更新倒计时:', {
+            now: now.toISOString(),
+            expire: CONFIG_EXPIRE_TIME.toISOString(),
+            diff: diff,
+            diffSeconds: Math.floor(diff / 1000)
+        });
+        updateCountdown._lastLogTime = nowTimestamp;
+    }
+    
+    if (diff > 0) {
+        const totalSeconds = Math.floor(diff / 1000);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        const displayText = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        
+        console.log('[倒计时] 显示:', displayText, `(${totalSeconds}秒)`);
+        timeElement.textContent = displayText;
+        
+        // 少于5分钟变红色
+        if (minutes < 5) {
+            timeElement.style.color = '#f72585';
+        } else {
+            timeElement.style.color = '';
+        }
+    } else {
+        // 已过期
+        console.log('[倒计时] 已过期，停止倒计时');
+        timeElement.textContent = '00:00';
+        timeElement.style.color = '#f72585';
+        
+        // 清除倒计时定时器
+        if (CONFIG_COUNTDOWN_INTERVAL) {
+            clearInterval(CONFIG_COUNTDOWN_INTERVAL);
+            CONFIG_COUNTDOWN_INTERVAL = null;
+        }
+    }
+}
+
+// 清理倒计时定时器
+function stopCountdown() {
+    if (CONFIG_COUNTDOWN_INTERVAL) {
+        clearInterval(CONFIG_COUNTDOWN_INTERVAL);
+        CONFIG_COUNTDOWN_INTERVAL = null;
+    }
+    CONFIG_EXPIRE_TIME = null;
 }
 
 
@@ -844,16 +1071,19 @@ function restorePreviousState() {
                 CONFIG.fileSize = state.fileSize;
                 
                 // 恢复显示
-                const codeSection = document.getElementById('codeSec');
                 const pickupCodeElement = document.getElementById('pickupCode');
                 
-                if (codeSection && pickupCodeElement) {
+                if (pickupCodeElement) {
                     pickupCodeElement.textContent = CONFIG.pickupCode;
-                    codeSection.style.display = 'block';
                     updateStatusDisplay();
-                    startStatusPolling();
+                    
+                    // 恢复状态时也需要获取最新状态并启动倒计时
+                    updateStatusFromServer().then(() => {
+                        startStatusPolling();
+                    });
                     
                     showMessage('已恢复上次的分享状态', 'info');
+                    // 注意：恢复状态时不自动打开弹窗，用户需要点击侧边栏按钮
                 }
             }
         }
@@ -891,11 +1121,42 @@ function addBackButton() {
     }
 }
 
+// ========== 弹窗控制函数 ==========
+// 注意：openModal 和 closeModal 已从 modal.js 模块导入，这里不再重复定义
+// 如果 modal.js 加载失败，这里保留备用实现
+if (typeof openModal === 'undefined') {
+    window.openModal = function(modalId) {
+        const modal = document.getElementById(modalId);
+        if (modal) {
+            modal.style.display = 'flex';
+            modal.style.alignItems = 'center';
+            modal.style.justifyContent = 'center';
+            modal.style.visibility = 'visible';
+            modal.style.opacity = '1';
+            modal.style.background = 'rgba(0, 0, 0, 0.6)';
+            modal.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+    };
+    
+    window.closeModal = function(modalId) {
+        const modal = document.getElementById(modalId);
+        if (modal) {
+            modal.style.display = 'none';
+            modal.style.visibility = 'hidden';
+            modal.style.opacity = '0';
+            modal.classList.remove('active');
+            document.body.style.overflow = '';
+        }
+    };
+}
+
 // ========== 页面卸载清理 ==========
 window.addEventListener('beforeunload', function() {
     if (CONFIG.pollingInterval) {
         clearInterval(CONFIG.pollingInterval);
     }
+    stopCountdown(); // 清理倒计时定时器
 });
 
 // ========== 导出配置供其他模块使用 ==========

@@ -1,0 +1,235 @@
+/* ====== 弹窗样式 ====== */
+.modal-overlay {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  background: rgba(0, 0, 0, 0.6) !important;
+  backdrop-filter: blur(5px) !important;
+  display: none !important;
+  align-items: center !important;
+  justify-content: center !important;
+  z-index: 10000 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+.modal-overlay.active {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.modal-content {
+  background: white !important;
+  border-radius: var(--border-radius) !important;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3) !important;
+  max-width: 500px !important;
+  width: 90% !important;
+  max-height: 90vh !important;
+  overflow-y: auto;
+  position: relative !important;
+  margin: auto !important;
+  animation: slideUp 0.3s ease;
+  z-index: 10001 !important;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(50px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.modal-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  padding: 20px 25px !important;
+  padding-right: 60px !important;
+  border-bottom: 1px solid var(--border-color) !important;
+  background: linear-gradient(135deg, var(--primary), var(--secondary)) !important;
+  color: white !important;
+  border-radius: var(--border-radius) var(--border-radius) 0 0 !important;
+  position: relative !important;
+}
+
+.modal-header h2 {
+  margin: 0 !important;
+  font-size: 1.5rem !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  flex: 1 !important;
+}
+
+.modal-close {
+  position: absolute !important;
+  top: 10px !important;
+  right: 10px !important;
+  background: rgba(255, 255, 255, 0.2) !important;
+  border: 2px solid rgba(255, 255, 255, 0.4) !important;
+  color: white !important;
+  font-size: 1.8rem !important;
+  font-weight: 300 !important;
+  width: 38px !important;
+  height: 38px !important;
+  border-radius: 50% !important;
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  line-height: 1 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  flex-shrink: 0 !important;
+  z-index: 10 !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+}
+
+.modal-close:hover {
+  background: rgba(255, 255, 255, 0.3) !important;
+  border-color: rgba(255, 255, 255, 0.6) !important;
+  transform: rotate(90deg) scale(1.15) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2) !important;
+}
+
+.modal-close:active {
+  transform: rotate(90deg) scale(0.9) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1) !important;
+}
+
+.modal-body {
+  padding: 25px;
+}
+
+/* ====== 侧边栏按钮样式 ====== */
+.sidebar-buttons {
+  position: fixed !important;
+  right: 0 !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  display: flex !important;
+  flex-direction: column;
+  gap: 15px;
+  z-index: 9999 !important;
+  padding-right: 0;
+  margin: 0;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+.sidebar-btn {
+  background: linear-gradient(135deg, #4361ee, #7209b7) !important;
+  color: white !important;
+  border: none !important;
+  border-radius: 12px 0 0 12px !important;
+  padding: 15px 12px !important;
+  cursor: pointer !important;
+  box-shadow: -2px 0 10px rgba(0, 0, 0, 0.3) !important;
+  transition: var(--transition);
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 65px !important;
+  font-size: 0.85rem !important;
+  font-weight: 600 !important;
+  position: relative;
+  overflow: visible;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+.sidebar-btn::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 4px;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.3);
+  transition: width 0.3s ease;
+}
+
+.sidebar-btn:hover {
+  transform: translateX(-5px);
+  box-shadow: 0 6px 25px rgba(67, 97, 238, 0.4);
+}
+
+.sidebar-btn:hover::before {
+  width: 100%;
+  opacity: 0.1;
+}
+
+.sidebar-btn i {
+  font-size: 1.4rem !important;
+  font-style: normal;
+  line-height: 1;
+  display: block !important;
+  visibility: visible !important;
+}
+
+.sidebar-btn span {
+  font-size: 0.7rem !important;
+  white-space: nowrap;
+  line-height: 1;
+  display: block !important;
+  visibility: visible !important;
+}
+
+@media (max-width: 576px) {
+  .modal-content {
+    width: 95%;
+    max-height: 95vh;
+  }
+  
+  .modal-header {
+    padding: 15px 20px;
+  }
+  
+  .modal-header h2 {
+    font-size: 1.3rem;
+  }
+  
+  .modal-body {
+    padding: 20px;
+  }
+  
+  .sidebar-buttons {
+    right: 0;
+    gap: 10px;
+  }
+  
+  .sidebar-btn {
+    min-width: 55px;
+    padding: 12px 8px;
+  }
+  
+  .sidebar-btn i {
+    font-size: 1.2rem;
+  }
+  
+  .sidebar-btn span {
+    font-size: 0.65rem;
+  }
+}
+

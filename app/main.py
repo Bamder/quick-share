@@ -72,6 +72,54 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# 添加验证错误处理器，显示详细错误信息
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc: RequestValidationError):
+    """处理请求验证错误，返回详细的错误信息"""
+    # 尝试读取请求体
+    body = None
+    try:
+        # 注意：request.body() 只能读取一次，如果已经读取过会返回空
+        # 这里尝试从异常对象中获取
+        if hasattr(exc, 'body'):
+            body = exc.body
+        else:
+            # 如果异常对象没有 body，尝试从请求中读取
+            body_bytes = await request.body()
+            if body_bytes:
+                import json
+                body = json.loads(body_bytes.decode('utf-8'))
+    except Exception as e:
+        logger.warning(f"无法读取请求体: {e}")
+        pass
+    
+    error_details = []
+    for error in exc.errors():
+        field_path = " -> ".join(str(loc) for loc in error.get("loc", []))
+        error_details.append({
+            "field": field_path,
+            "message": error.get("msg", "验证失败"),
+            "type": error.get("type", "unknown")
+        })
+    
+    logger.error(f"请求验证失败:")
+    logger.error(f"  路径: {request.url.path}")
+    logger.error(f"  请求体: {body}")
+    logger.error(f"  错误详情: {error_details}")
+    
+    return JSONResponse(
+        status_code=422,
+        content={
+            "code": 422,
+            "msg": "请求数据验证失败",
+            "detail": error_details,
+            "requestBody": body
+        }
+    )
+
 # 配置CORS
 app.add_middleware(
     CORSMiddleware,
@@ -103,8 +151,13 @@ app.include_router(reports_router.router, prefix=settings.API_V1_PREFIX)
 
 @app.get("/")
 async def root():
-    """返回前端欢迎页"""
-    welcome_path = os.path.join(static_dir, "pages", "welcome.html")
+    """根路径，返回前端欢迎页"""
+    return await welcome_page()
+
+@app.get("/welcome")
+async def welcome_page():
+    """欢迎页面路由"""
+    welcome_path = os.path.join(static_dir, "pages", "welcome", "welcome.html")
     if os.path.exists(welcome_path):
         return FileResponse(
             welcome_path,
@@ -112,29 +165,31 @@ async def root():
             headers={"Cache-Control": "no-cache"}
         )
     else:
-        # 如果找不到欢迎页，尝试返回首页
-        index_path = os.path.join(static_dir, "pages", "index.html")
-        if os.path.exists(index_path):
-            return FileResponse(
-                index_path,
-                media_type="text/html",
-                headers={"Cache-Control": "no-cache"}
-            )
-        else:
-            # 如果都找不到，返回 API 信息
-            logger.warning(f"前端文件未找到: {welcome_path} 和 {index_path}")
-            logger.warning(f"项目根目录: {project_root}")
-            logger.warning(f"静态文件目录: {static_dir}")
-            return {
-                "app": settings.APP_NAME,
-                "version": settings.APP_VERSION,
-                "docs": "/docs",
-                "health": "/health",
-                "note": f"前端文件未找到: {welcome_path}",
-                "debug": {
-                    "project_root": project_root,
-                    "static_dir": static_dir,
-                    "welcome_path": welcome_path,
-                    "index_path": index_path
-                }
-            }
+        logger.warning(f"欢迎页文件未找到: {welcome_path}")
+        return {
+            "app": settings.APP_NAME,
+            "version": settings.APP_VERSION,
+            "docs": "/docs",
+            "health": "/health",
+            "error": f"欢迎页文件未找到: {welcome_path}"
+        }
+
+@app.get("/index")
+async def index_page():
+    """主页面路由（文件传输页面）"""
+    index_path = os.path.join(static_dir, "pages", "index", "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(
+            index_path,
+            media_type="text/html",
+            headers={"Cache-Control": "no-cache"}
+        )
+    else:
+        logger.warning(f"主页面文件未找到: {index_path}")
+        return {
+            "app": settings.APP_NAME,
+            "version": settings.APP_VERSION,
+            "docs": "/docs",
+            "health": "/health",
+            "error": f"主页面文件未找到: {index_path}"
+        }
