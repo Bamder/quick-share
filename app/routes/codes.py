@@ -7,7 +7,7 @@ import uuid
 import logging
 from app.utils.response import success_response, not_found_response, bad_request_response, created_response
 from app.utils.validation import validate_pickup_code
-from app.utils.pickup_code import generate_unique_pickup_code
+from app.utils.pickup_code import generate_unique_pickup_code, check_and_update_expired_pickup_code
 from app.extensions import get_db
 from app.models.pickup_code import PickupCode
 from app.models.file import File
@@ -136,6 +136,10 @@ async def get_code_status(code: str, db: Session = Depends(get_db)):
     pickup_code = db.query(PickupCode).filter(PickupCode.code == code).first()
     if not pickup_code:
         return not_found_response(msg=f"取件码 {code} 不存在")
+    
+    # 检查并更新过期状态
+    check_and_update_expired_pickup_code(pickup_code, db)
+    db.refresh(pickup_code)  # 刷新以获取最新状态
     
     # 查询关联的文件信息
     file = db.query(File).filter(File.id == pickup_code.file_id).first()

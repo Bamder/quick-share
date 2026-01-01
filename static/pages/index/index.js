@@ -13,7 +13,7 @@ import {
     testPortConnection
 } from '/static/utils/common-utils.js';
 
-// 导入 WebRTC 服务（使用导出的单例实例）
+// 导入服务（使用导出的单例实例）
 import { senderService as importedSenderService } from '/static/service/sender-service.js';
 import { receiverService as importedReceiverService } from '/static/service/receiver-service.js';
 
@@ -24,10 +24,11 @@ const CONFIG = {
     pickupCode: '',
     fileSize: 0,
     fileName: '',
-    pollingInterval: null
+    pollingInterval: null,
+    encryptionKey: null  // 加密密钥（用于分享给接收者）
 };
 
-// WebRTC 服务实例（使用导入的单例）
+// 服务实例（使用导入的单例）
 const senderService = importedSenderService;
 const receiverService = importedReceiverService;
 
@@ -335,18 +336,45 @@ function copyPickupCode() {
         return;
     }
     
-    navigator.clipboard.writeText(CONFIG.pickupCode)
-        .then(() => showMessage('取件码已复制到剪贴板', 'success'))
-        .catch(() => {
-            // 降级方案
-            const textArea = document.createElement('textarea');
-            textArea.value = CONFIG.pickupCode;
-            document.body.appendChild(textArea);
-            textArea.select();
-            document.execCommand('copy');
-            document.body.removeChild(textArea);
+    // 检查是否支持 Clipboard API
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(CONFIG.pickupCode)
+            .then(() => showMessage('取件码已复制到剪贴板', 'success'))
+            .catch((error) => {
+                console.warn('Clipboard API 失败，使用降级方案:', error);
+                // 降级方案
+                fallbackCopyTextToClipboard(CONFIG.pickupCode);
+            });
+    } else {
+        // 直接使用降级方案
+        fallbackCopyTextToClipboard(CONFIG.pickupCode);
+    }
+}
+
+// 降级复制方案（兼容旧浏览器）
+function fallbackCopyTextToClipboard(text) {
+    try {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        
+        const successful = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        
+        if (successful) {
             showMessage('取件码已复制', 'success');
-        });
+        } else {
+            showMessage('复制失败，请手动复制取件码', 'error');
+        }
+    } catch (error) {
+        console.error('复制失败:', error);
+        showMessage('复制失败，请手动复制取件码', 'error');
+    }
 }
 
 // ========== 接收文件 ==========
@@ -357,7 +385,7 @@ async function receiveFile() {
     const code = inputCode.value.trim().toUpperCase();
     
     if (!isValidPickupCode(code)) {
-        showMessage('请输入6位有效的取件码', 'error');
+        showMessage('请输入12位有效的取件码', 'error');
         return;
     }
     
@@ -412,47 +440,37 @@ async function receiveFile() {
     }
 }
 
-// ========== 初始化 SenderService ==========
+// ========== 初始化 SenderService（服务器中转模式） ==========
 async function initializeSenderService() {
-    if (!CONFIG.API_BASE || !CONFIG.pickupCode) {
+    if (!CONFIG.API_BASE || !CONFIG.pickupCode || !CONFIG.localFile) {
         return;
     }
     
     try {
-        // 创建 SenderService 实例
-        senderService = new SenderService();
-        
         // 初始化服务
         senderService.init(`${CONFIG.API_BASE}/v1`, {
-            onConnectionStateChange: (state) => {
-                console.log('Sender连接状态变更:', state);
-                updateConnectionStatus('sender', state);
-            },
-            onDataChannelOpen: () => {
-                console.log('数据通道已打开，准备发送文件');
-                showMessage('连接已建立，等待接收方准备...', 'info');
-            },
-            onProgress: (sent, total) => {
-                const progress = Math.floor((sent / total) * 100);
-                console.log(`发送进度: ${progress}%`);
-                // 可以在这里更新发送进度显示（如果需要）
+            onProgress: (progress, sent, total) => {
+                console.log(`上传进度: ${progress.toFixed(1)}% (${sent}/${total})`);
+                // 可以在这里更新上传进度显示（如果需要）
             },
             onComplete: () => {
-                console.log('文件发送完成');
-                showMessage('文件已成功发送', 'success');
+                console.log('文件上传完成');
+                showMessage('文件已成功上传，等待接收方下载', 'success');
             },
             onError: (error) => {
-                console.error('Sender错误:', error);
-                showMessage(`发送失败: ${error.message}`, 'error');
+                console.error('上传错误:', error);
+                showMessage(`上传失败: ${error.message}`, 'error');
             }
         });
         
-        // 注册 Sender
-        await senderService.registerSender(CONFIG.pickupCode);
-        console.log('Sender注册成功，等待Receiver连接...');
+        // 通过服务器中转上传文件（使用端到端加密）
+        console.log('[Sender] 开始上传文件（服务器中转模式）...');
+        showMessage('正在上传文件...', 'info');
         
-        // 开始自动等待 Offer
-        startWaitingForOffer();
+        await senderService.uploadFileViaRelay(CONFIG.pickupCode, CONFIG.localFile);
+        
+        console.log('[Sender] ✓ 文件上传完成');
+        showMessage('文件上传完成！请将取件码分享给接收方', 'success');
         
     } catch (error) {
         console.error('初始化SenderService失败:', error);
@@ -460,122 +478,16 @@ async function initializeSenderService() {
     }
 }
 
-// ========== 自动等待 Offer ==========
-async function startWaitingForOffer() {
-    if (!CONFIG.API_BASE || !CONFIG.pickupCode || !CONFIG.localFile) {
-        return;
-    }
-    
-    console.log('开始轮询等待Receiver的Offer...');
-    showMessage('等待接收方连接...', 'info');
-    
-    const maxAttempts = 120; // 最多等待2分钟（120次 * 1秒）
-    const interval = 1000; // 每秒查询一次
-    
-    for (let i = 0; i < maxAttempts; i++) {
-        try {
-            // 查询活跃的会话列表
-            const response = await fetch(
-                `${CONFIG.API_BASE}/v1/codes/${CONFIG.pickupCode}/webrtc/sessions?status=offer_created`
-            );
-            
-            if (response.ok) {
-                const result = await response.json();
-                
-                if (result.code === 200 && result.data && result.data.sessions) {
-                    const sessions = result.data.sessions;
-                    
-                    // 查找有 Offer 且未过期的会话
-                    const activeSession = sessions.find(s => 
-                        s.hasOffer && 
-                        !s.isExpired && 
-                        s.status === 'offer_created'
-                    );
-                    
-                    if (activeSession) {
-                        console.log('找到活跃会话:', activeSession.sessionId);
-                        showMessage('发现接收方连接，正在建立连接...', 'info');
-                        
-                        // 获取 Offer 并创建 Answer
-                        await handleReceiverOffer(activeSession.sessionId);
-                        return; // 成功，退出轮询
-                    }
-                }
-            }
-            
-            // 等待后继续轮询
-            await new Promise(resolve => setTimeout(resolve, interval));
-            
-            // 每10次显示一次进度
-            if (i % 10 === 0 && i > 0) {
-                console.log(`等待中... (${i}/${maxAttempts})`);
-            }
-            
-        } catch (error) {
-            console.error(`轮询会话列表失败 (尝试 ${i + 1}/${maxAttempts}):`, error);
-            await new Promise(resolve => setTimeout(resolve, interval));
-        }
-    }
-    
-    // 超时
-    console.warn('等待Offer超时');
-    showMessage('等待接收方连接超时，请检查取件码是否正确分享', 'warning');
-}
+// ========== P2P WebRTC 相关代码已完全移除 ==========
+// 已改为使用服务器中转模式，不再需要等待 Offer、处理连接等逻辑
 
-// ========== 处理 Receiver 的 Offer ==========
-async function handleReceiverOffer(sessionId) {
-    try {
-        // 使用 SenderService 获取 Offer 并创建 Answer
-        const offer = await senderService.waitForOffer(sessionId, 10, 500); // 最多等待5秒
-        
-        // 接收 Offer 并创建 Answer
-        await senderService.receiveOfferAndCreateAnswer(
-            CONFIG.pickupCode,
-            sessionId,
-            offer
-        );
-        
-        console.log('Answer已创建，等待连接建立...');
-        showMessage('连接已建立，准备发送文件...', 'info');
-        
-        // 等待数据通道打开后自动发送文件
-        const originalOnDataChannelOpen = senderService.onDataChannelOpen;
-        senderService.onDataChannelOpen = () => {
-            // 调用原始回调
-            if (originalOnDataChannelOpen) {
-                originalOnDataChannelOpen();
-            }
-            
-            // 数据通道打开后，自动开始发送文件
-            if (CONFIG.localFile) {
-                console.log('数据通道已打开，开始发送文件...');
-                senderService.startSendingFile(CONFIG.localFile)
-                    .then(() => {
-                        console.log('文件发送完成');
-                    })
-                    .catch((error) => {
-                        console.error('文件发送失败:', error);
-                        showMessage(`文件发送失败: ${error.message}`, 'error');
-                    });
-            }
-        };
-        
-    } catch (error) {
-        console.error('处理Offer失败:', error);
-        showMessage(`连接失败: ${error.message}`, 'error');
-    }
-}
-
-// ========== 初始化 ReceiverService ==========
+// ========== 初始化 ReceiverService（服务器中转模式） ==========
 async function initializeReceiverService(code, fileInfo) {
     if (!CONFIG.API_BASE) {
         return;
     }
     
     try {
-        // 创建 ReceiverService 实例
-        receiverService = new ReceiverService();
-        
         // 显示文件信息
         const progressBar = document.getElementById('recvProgressBar');
         const progressFill = document.querySelector('.progress-fill');
@@ -587,38 +499,19 @@ async function initializeReceiverService(code, fileInfo) {
         
         // 初始化服务
         receiverService.init(`${CONFIG.API_BASE}/v1`, {
-            onConnectionStateChange: (state) => {
-                console.log('Receiver连接状态变更:', state);
-                updateConnectionStatus('receiver', state);
-            },
-            onDataChannelOpen: () => {
-                console.log('数据通道已打开，开始接收文件');
-                showMessage('连接已建立，开始接收文件...', 'info');
-            },
-            onDataChannelMessage: (event) => {
-                // 进度更新由服务内部处理
-            },
-            onDataChannelClose: () => {
-                console.log('数据通道已关闭');
-            },
-            onError: (error) => {
-                console.error('Receiver错误:', error);
-                showMessage(`接收失败: ${error.message}`, 'error');
-                showLoading(false);
-            }
-        });
-        
-        // 保存原始回调
-        const originalOnMessage = receiverService.onDataChannelMessage;
-        
-        // 设置自定义回调来处理文件接收完成和进度更新
-        receiverService.onDataChannelMessage = (event) => {
-            // 如果是文件完成事件（从 reconstructFile 触发）
-            if (event && typeof event === 'object' && event.type === 'fileComplete') {
-                const fileBlob = event.file;
-                const fileName = event.fileName;
+            onProgress: (progress, received, total) => {
+                console.log(`下载进度: ${progress.toFixed(1)}% (${received}/${total})`);
                 
-                console.log('文件接收完成:', fileName);
+                // 更新进度条
+                if (progressFill) {
+                    progressFill.style.width = `${progress}%`;
+                }
+                if (progressPercent) {
+                    progressPercent.textContent = `${progress.toFixed(1)}%`;
+                }
+            },
+            onComplete: (fileBlob) => {
+                console.log('文件下载完成:', fileInfo.fileName);
                 
                 // 更新进度条
                 if (progressFill) {
@@ -634,12 +527,12 @@ async function initializeReceiverService(code, fileInfo) {
                     downloadLink.style.display = 'block';
                     downloadLink.onclick = (e) => {
                         e.preventDefault();
-                        downloadBlob(fileBlob, fileName);
+                        downloadBlob(fileBlob, fileInfo.fileName);
                     };
-                    downloadLink.textContent = `下载 ${fileName}`;
+                    downloadLink.textContent = `下载 ${fileInfo.fileName}`;
                 }
                 
-                showMessage('文件接收完成，可以下载了', 'success');
+                showMessage('文件下载完成，可以保存了', 'success');
                 showLoading(false);
                 
                 const receiveBtn = document.getElementById('receiveBtn');
@@ -647,41 +540,41 @@ async function initializeReceiverService(code, fileInfo) {
                     receiveBtn.disabled = false;
                     receiveBtn.innerHTML = '<i class="icon-receive"></i> 领取';
                 }
-            } else {
-                // 调用原始处理函数（处理正常的消息事件）
-                if (originalOnMessage) {
-                    originalOnMessage(event);
-                }
+            },
+            onError: (error) => {
+                console.error('下载错误:', error);
+                showMessage(`下载失败: ${error.message}`, 'error');
+                showLoading(false);
                 
-                // 更新进度（从 receivedChunks 计算）
-                if (receiverService.fileInfo && receiverService.receivedChunks) {
-                    const receivedCount = receiverService.receivedChunks.filter(chunk => chunk !== undefined).length;
-                    const total = receiverService.fileInfo.totalChunks;
-                    if (total > 0) {
-                        const progress = Math.floor((receivedCount / total) * 100);
-                        
-                        if (progressFill) {
-                            progressFill.style.width = `${progress}%`;
-                        }
-                        if (progressPercent) {
-                            progressPercent.textContent = `${progress}%`;
-                        }
-                    }
+                const receiveBtn = document.getElementById('receiveBtn');
+                if (receiveBtn) {
+                    receiveBtn.disabled = false;
+                    receiveBtn.innerHTML = '<i class="icon-receive"></i> 领取';
                 }
             }
-        };
+        });
         
-        // 创建 Offer 并开始连接
-        showLoading(true, '正在建立连接...');
-        const sessionId = await receiverService.createOffer(code);
-        console.log('Receiver创建Offer成功，sessionId:', sessionId);
+        // 通过服务器中转下载文件（使用端到端解密）
+        // 密钥会自动从服务器获取，并使用取件码解密
+        showLoading(true, '正在下载文件...');
+        console.log('[Receiver] 开始下载文件（服务器中转模式）...');
         
-        // 等待 Answer（服务内部会自动处理）
-        await receiverService.waitForAnswer();
+        await receiverService.downloadFileViaRelay(code);
         
     } catch (error) {
         console.error('初始化ReceiverService失败:', error);
-        showMessage(`接收失败: ${error.message}`, 'error');
+        
+        // 检查是否是取件码过期错误
+        if (error.code === 'EXPIRED') {
+            showMessage('取件码已过期，无法使用', 'error');
+            // 更新取件码显示为过期状态
+            updatePickupCodeExpiredDisplay(code);
+        } else if (error.code === 'COMPLETED') {
+            showMessage('取件码已完成，无法使用', 'error');
+        } else {
+            showMessage(`接收失败: ${error.message}`, 'error');
+        }
+        
         showLoading(false);
         
         const receiveBtn = document.getElementById('receiveBtn');
@@ -692,30 +585,11 @@ async function initializeReceiverService(code, fileInfo) {
     }
 }
 
-// ========== 更新连接状态 ==========
+// ========== 更新连接状态（已弃用，服务器中转模式不需要） ==========
+// 此函数已不再使用，保留以防其他地方有引用
 function updateConnectionStatus(role, state) {
-    const statusElement = document.getElementById('statStatus');
-    if (!statusElement) return;
-    
-    const statusMap = {
-        'new': '新建',
-        'connecting': '连接中',
-        'connected': '已连接',
-        'disconnected': '已断开',
-        'failed': '连接失败',
-        'closed': '已关闭'
-    };
-    
-    statusElement.textContent = statusMap[state] || state;
-    
-    // 根据状态改变颜色
-    if (state === 'connected') {
-        statusElement.style.color = '#4cc9f0';
-    } else if (state === 'failed' || state === 'closed') {
-        statusElement.style.color = '#f72585';
-    } else {
-        statusElement.style.color = '#4361ee';
-    }
+    // 服务器中转模式不需要连接状态更新
+    // 此函数保留仅为兼容性，实际不会被调用
 }
 
 // ========== 状态轮询 ==========
@@ -756,6 +630,15 @@ async function updateStatusFromServer() {
     }
 }
 
+// ========== 更新取件码过期显示 ==========
+function updatePickupCodeExpiredDisplay(code) {
+    const pickupCodeElement = document.getElementById('pickupCode');
+    if (pickupCodeElement) {
+        pickupCodeElement.textContent = code;
+        pickupCodeElement.classList.add('expired');
+    }
+}
+
 // ========== 从服务器数据更新状态显示 ==========
 // 存储过期时间，用于实时倒计时
 let CONFIG_EXPIRE_TIME = null;
@@ -772,8 +655,6 @@ function updateStatusDisplayFromServer(data) {
         // 解析过期时间（支持 ISO 8601 格式，处理时区）
         let expireTime;
         try {
-            console.log('[倒计时] 收到过期时间:', data.expireAt, '类型:', typeof data.expireAt);
-            
             // 处理时区问题：
             // 如果后端返回的时间没有时区标识（如 "2025-12-31T07:06:56"），
             // 我们需要假设它是 UTC 时间，因为后端使用的是 datetime.utcnow()
@@ -784,16 +665,10 @@ function updateStatusDisplayFromServer(data) {
                 // 如果格式是 "YYYY-MM-DDTHH:mm:ss"，添加 "Z"
                 if (expireAtStr.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/)) {
                     expireAtStr = expireAtStr + 'Z';
-                    console.log('[倒计时] 添加 UTC 时区标识:', expireAtStr);
                 }
             }
             
             expireTime = new Date(expireAtStr);
-            
-            console.log('[倒计时] 解析后的时间对象:', expireTime);
-            console.log('[倒计时] 时间戳:', expireTime.getTime());
-            console.log('[倒计时] UTC 时间:', expireTime.toUTCString());
-            console.log('[倒计时] 本地时间:', expireTime.toLocaleString());
             
             // 验证日期是否有效
             if (isNaN(expireTime.getTime())) {
@@ -802,20 +677,33 @@ function updateStatusDisplayFromServer(data) {
                 return;
             }
             
+            // 检查是否已过期
+            const now = new Date();
+            const isExpired = expireTime.getTime() <= now.getTime();
+            
             // 保存过期时间，用于实时倒计时
             CONFIG_EXPIRE_TIME = expireTime;
-            console.log('[倒计时] 已保存过期时间:', CONFIG_EXPIRE_TIME);
             
-            // 如果倒计时定时器不存在，启动它
+            // 如果已过期，不创建定时器，直接显示过期状态
+            if (isExpired) {
+                if (timeElement) {
+                    timeElement.textContent = '00:00';
+                    timeElement.style.color = '#f72585';
+                }
+                // 清除可能存在的定时器
+                if (CONFIG_COUNTDOWN_INTERVAL) {
+                    clearInterval(CONFIG_COUNTDOWN_INTERVAL);
+                    CONFIG_COUNTDOWN_INTERVAL = null;
+                }
+                return;
+            }
+            
+            // 如果倒计时定时器不存在且未过期，启动它
             if (!CONFIG_COUNTDOWN_INTERVAL) {
-                console.log('[倒计时] 启动倒计时定时器');
                 startCountdown();
-            } else {
-                console.log('[倒计时] 倒计时定时器已存在，跳过启动');
             }
             
             // 立即更新一次
-            console.log('[倒计时] 立即更新一次显示');
             updateCountdown();
         } catch (error) {
             console.error('[倒计时] 解析过期时间失败:', error, data.expireAt);
@@ -861,35 +749,51 @@ function updateStatusDisplayFromServer(data) {
             statusElement.style.color = '#6c757d';
         }
     }
+    
+    // 如果取件码已过期，更新取件码显示样式
+    if (data.status === 'expired') {
+        const pickupCodeElement = document.getElementById('pickupCode');
+        if (pickupCodeElement && data.code) {
+            pickupCodeElement.textContent = data.code;
+            pickupCodeElement.classList.add('expired');
+        }
+    } else {
+        // 如果未过期，移除过期样式
+        const pickupCodeElement = document.getElementById('pickupCode');
+        if (pickupCodeElement) {
+            pickupCodeElement.classList.remove('expired');
+        }
+    }
 }
 
 // ========== 实时倒计时 ==========
 function startCountdown() {
     // 如果已有定时器，先清除
     if (CONFIG_COUNTDOWN_INTERVAL) {
-        console.log('[倒计时] 清除旧的定时器');
         clearInterval(CONFIG_COUNTDOWN_INTERVAL);
+        CONFIG_COUNTDOWN_INTERVAL = null;
     }
     
-    console.log('[倒计时] 创建新的倒计时定时器');
+    // 检查是否已过期
+    if (CONFIG_EXPIRE_TIME && CONFIG_EXPIRE_TIME.getTime() <= new Date().getTime()) {
+        // 已过期，不创建定时器
+        return;
+    }
+    
     // 每秒更新一次倒计时
     CONFIG_COUNTDOWN_INTERVAL = setInterval(() => {
         updateCountdown();
     }, 1000);
-    
-    console.log('[倒计时] 定时器ID:', CONFIG_COUNTDOWN_INTERVAL);
 }
 
 function updateCountdown() {
     const timeElement = document.getElementById('statTime');
     
     if (!timeElement) {
-        console.warn('[倒计时] 找不到时间显示元素 #statTime');
         return;
     }
     
     if (!CONFIG_EXPIRE_TIME) {
-        console.warn('[倒计时] 过期时间未设置');
         return;
     }
     
@@ -898,24 +802,12 @@ function updateCountdown() {
     const nowTimestamp = now.getTime();
     const diff = expireTimestamp - nowTimestamp;
     
-    // 只在第一次或每10秒记录一次详细日志（避免日志过多）
-    if (!updateCountdown._lastLogTime || (nowTimestamp - updateCountdown._lastLogTime) > 10000) {
-        console.log('[倒计时] 更新倒计时:', {
-            now: now.toISOString(),
-            expire: CONFIG_EXPIRE_TIME.toISOString(),
-            diff: diff,
-            diffSeconds: Math.floor(diff / 1000)
-        });
-        updateCountdown._lastLogTime = nowTimestamp;
-    }
-    
     if (diff > 0) {
         const totalSeconds = Math.floor(diff / 1000);
         const minutes = Math.floor(totalSeconds / 60);
         const seconds = totalSeconds % 60;
         const displayText = `${minutes}:${seconds.toString().padStart(2, '0')}`;
         
-        console.log('[倒计时] 显示:', displayText, `(${totalSeconds}秒)`);
         timeElement.textContent = displayText;
         
         // 少于5分钟变红色
@@ -926,7 +818,6 @@ function updateCountdown() {
         }
     } else {
         // 已过期
-        console.log('[倒计时] 已过期，停止倒计时');
         timeElement.textContent = '00:00';
         timeElement.style.color = '#f72585';
         

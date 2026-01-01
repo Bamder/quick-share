@@ -6,17 +6,16 @@ def validate_pickup_code(code: str) -> bool:
     """
     验证取件码格式
     
-    规则：6位大写字母或数字
-    正则：^[A-Z0-9]{6}$
+    规则：12位大写字母或数字（前6位查找码+后6位密钥码）
+    正则：^[A-Z0-9]{12}$
     
     示例：
-    - WAIT01 ✓
-    - TRAN02 ✓
-    - ABC123 ✓
-    - abc123 ✗ (小写)
-    - ABC12 ✗ (5位)
+    - ABC123XYZ789 ✓
+    - WAIT01TRAN02 ✓
+    - abc123xyz789 ✗ (小写)
+    - ABC123XYZ78 ✗ (11位)
     """
-    pattern = r'^[A-Z0-9]{6}$'
+    pattern = r'^[A-Z0-9]{12}$'
     return bool(re.match(pattern, code))
 
 

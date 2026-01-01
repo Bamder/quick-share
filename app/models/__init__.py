@@ -2,9 +2,7 @@
 from .base import Base
 from .file import File
 from .pickup_code import PickupCode
-from .webrtc_session import WebRTCSession
 from .report import Report
-from .registered_sender import RegisteredSender  # 新增
 
 # 暴露所有模型类，便于Alembic自动生成迁移脚本
-__all__ = ["Base", "File", "PickupCode", "WebRTCSession", "Report", "RegisteredSender"]
+__all__ = ["Base", "File", "PickupCode", "Report"]

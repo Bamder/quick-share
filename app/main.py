@@ -8,10 +8,11 @@ from contextlib import asynccontextmanager
 from app.models import Base
 import app.routes.health as health_router
 import app.routes.codes as codes_router
-import app.routes.webrtc as webrtc_router
+import app.routes.relay as relay_router
 import app.routes.reports as reports_router
 import logging
 import os
+import socket
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ async def lifespan(app: FastAPI):
     
     注意：数据库环境检查已在启动脚本中完成，这里假设环境已就绪
     """
+    
     # 启动时：创建数据库表
     # 注意：数据库环境检查已在启动脚本中完成，这里应该能成功
     try:
@@ -60,7 +62,7 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # 关闭时：目前无需特殊清理，SQLAlchemy 会自动管理连接池
+    # SQLAlchemy 会自动管理连接池
 
 
 # 创建FastAPI应用
@@ -138,6 +140,7 @@ static_dir = os.path.join(project_root, "static")
 # 挂载静态文件目录
 if os.path.exists(static_dir):
     # 挂载静态资源（CSS、JS、图片等）
+    # 添加缓存控制：开发环境禁用缓存，生产环境可以启用
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
     logger.info(f"静态文件目录已挂载: {static_dir}")
 else:
@@ -146,7 +149,7 @@ else:
 # 注册路由
 app.include_router(health_router.router)
 app.include_router(codes_router.router, prefix=settings.API_V1_PREFIX)
-app.include_router(webrtc_router.router, prefix=settings.API_V1_PREFIX)
+app.include_router(relay_router.router, prefix=settings.API_V1_PREFIX)
 app.include_router(reports_router.router, prefix=settings.API_V1_PREFIX)
 
 @app.get("/")

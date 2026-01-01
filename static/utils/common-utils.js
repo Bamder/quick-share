@@ -129,7 +129,7 @@ export function showLoading(show = true, text = '加载中...') {
  * @returns {boolean} 是否有效
  */
 export function isValidPickupCode(code) {
-    return /^[A-Z0-9]{6}$/.test(code);
+    return /^[A-Z0-9]{12}$/.test(code);
 }
 
 /**
@@ -144,10 +144,10 @@ export function isValidPort(port) {
 
 /**
  * 生成取件码
- * @returns {string} 6位取件码
+ * @returns {string} 12位取件码（前6位查找码+后6位密钥码）
  */
 export function generatePickupCode() {
-    return Array.from({length: 6}, () => 
+    return Array.from({length: 12}, () => 
         '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'[Math.floor(Math.random() * 36)]
     ).join('');
 }

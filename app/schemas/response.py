@@ -28,29 +28,6 @@ class PickupCodeStatusResponse(BaseModel):
     createdAt: datetime
 
 
-class WebRTCOfferResponse(BaseModel):
-    """WebRTC Offer响应模型"""
-    sessionId: str
-    offer: str
-    status: str
-    createdAt: datetime
-
-
-class WebRTCAnswerResponse(BaseModel):
-    """WebRTC Answer响应模型"""
-    sessionId: str
-    answer: str
-    status: str
-    createdAt: datetime
-
-
-class SenderRegisterResponse(BaseModel):
-    """发送方注册响应模型"""
-    registeredAt: datetime
-    expiresIn: int
-    expiresAt: datetime
-
-
 class UsageUpdateResponse(BaseModel):
     """使用次数更新响应模型"""
     code: str
@@ -58,14 +35,6 @@ class UsageUpdateResponse(BaseModel):
     limitCount: int
     remaining: int
     updatedAt: datetime
-
-
-class IceCandidateResponse(BaseModel):
-    """ICE候选响应模型"""
-    candidate: str
-    sdpMid: Optional[str] = None
-    sdpMLineIndex: Optional[int] = None
-    createdAt: datetime
 
 
 class CreateCodeResponse(BaseModel):
