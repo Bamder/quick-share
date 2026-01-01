@@ -68,12 +68,15 @@ async def create_code(
         db.flush()  # 获取 file_id，但不提交事务
         
         # 5. 生成唯一取件码
-        pickup_code = generate_unique_pickup_code(db)
+        # 返回：(lookup_code, full_code)
+        # - lookup_code: 6位查找码（存储到数据库）
+        # - full_code: 12位完整取件码（返回给前端，包含后6位密钥码）
+        lookup_code, full_code = generate_unique_pickup_code(db)
         
-        # 6. 创建数据库表 pickup_codes 记录
+        # 6. 创建数据库表 pickup_codes 记录（只存储6位查找码）
         limit_count = request_data.limitCount if request_data.limitCount else 3
         pickup_code_record = PickupCode(
-            code=pickup_code,
+            code=lookup_code,  # 只存储6位查找码，不存储后6位密钥码
             file_id=file_record.id,
             status="waiting",
             used_count=0,
@@ -89,8 +92,9 @@ async def create_code(
         db.refresh(pickup_code_record)
         
         # 8. 构建响应数据
+        # 返回完整的12位取件码给前端（包含后6位密钥码）
         response_data = CreateCodeResponse(
-            code=pickup_code_record.code,
+            code=full_code,  # 返回12位完整码给前端
             fileId=file_record.id,
             fileName=file_record.original_name,
             fileSize=file_record.size,
@@ -121,21 +125,21 @@ async def get_code_status(code: str, db: Session = Depends(get_db)):
     查询取件码状态
     
     参数：
-    - code: 6位取件码（大写字母和数字）
+    - code: 12位取件码（前6位查找码+后6位密钥码，大写字母和数字）
     
     返回：
     - 取件码信息
     - 文件信息
     - 使用状态
     """
-    # 验证取件码格式
+    # 验证取件码格式（服务器只接收6位查找码）
     if not validate_pickup_code(code):
         return bad_request_response(msg="取件码格式错误，必须为6位大写字母或数字")
     
-    # 查询数据库
+    # 直接使用6位查找码查询数据库（服务器只接收查找码，不接触密钥码）
     pickup_code = db.query(PickupCode).filter(PickupCode.code == code).first()
     if not pickup_code:
-        return not_found_response(msg=f"取件码 {code} 不存在")
+        return not_found_response(msg=f"取件码不存在")
     
     # 检查并更新过期状态
     check_and_update_expired_pickup_code(pickup_code, db)
@@ -169,18 +173,19 @@ async def get_file_info(code: str, db: Session = Depends(get_db)):
     获取文件详细信息
     
     参数：
-    - code: 6位取件码
+    - code: 12位取件码（前6位查找码+后6位密钥码）
     
     返回：
     - 文件的完整信息
     """
+    # 验证取件码格式（服务器只接收6位查找码）
     if not validate_pickup_code(code):
-        return bad_request_response(msg="取件码格式错误")
+        return bad_request_response(msg="取件码格式错误，必须为6位大写字母或数字")
     
-    # 查询取件码和关联文件
+    # 直接使用6位查找码查询数据库（服务器只接收查找码，不接触密钥码）
     pickup_code = db.query(PickupCode).filter(PickupCode.code == code).first()
     if not pickup_code:
-        return not_found_response(msg=f"取件码 {code} 不存在")
+        return not_found_response(msg=f"取件码不存在")
     
     file = db.query(File).filter(File.id == pickup_code.file_id).first()
     if not file:
@@ -206,17 +211,19 @@ async def increment_usage(code: str, db: Session = Depends(get_db)):
     增加使用次数
     
     参数：
-    - code: 6位取件码
+    - code: 12位取件码（前6位查找码+后6位密钥码）
     
     返回：
     - 更新后的使用情况
     """
+    # 验证取件码格式（服务器只接收6位查找码）
     if not validate_pickup_code(code):
-        return bad_request_response(msg="取件码格式错误")
+        return bad_request_response(msg="取件码格式错误，必须为6位大写字母或数字")
     
+    # 直接使用6位查找码查询数据库（服务器只接收查找码，不接触密钥码）
     pickup_code = db.query(PickupCode).filter(PickupCode.code == code).first()
     if not pickup_code:
-        return not_found_response(msg=f"取件码 {code} 不存在")
+        return not_found_response(msg=f"取件码不存在")
     
     # 检查是否已达到上限
     used_count = pickup_code.used_count or 0

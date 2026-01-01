@@ -14,17 +14,18 @@ async def report_file(request: ReportRequest, db: Session = Depends(get_db)):
     """
     举报违规文件
     """
+    # 验证取件码格式（服务器只接收6位查找码）
     if not validate_pickup_code(request.code):
-        return bad_request_response(msg="取件码格式错误")
+        return bad_request_response(msg="取件码格式错误，必须为6位大写字母或数字")
     
-    # 检查取件码是否存在
+    # 直接使用6位查找码查询数据库（服务器只接收查找码，不接触密钥码）
     pickup_code = db.query(PickupCode).filter(PickupCode.code == request.code).first()
     if not pickup_code:
-        return not_found_response(msg=f"取件码 {request.code} 不存在")
+        return not_found_response(msg=f"取件码不存在")
     
-    # 创建举报记录
+    # 创建举报记录（只存储6位查找码）
     report = Report(
-        code=request.code,
+        code=request.code,  # 只存储6位查找码
         reason=request.reason,
         reporter_ip=request.reporterInfo.ipAddress if request.reporterInfo else None,
         status="pending"

@@ -47,28 +47,58 @@ def generate_pickup_code() -> str:
     return ''.join(random.choice(chars) for _ in range(12))
 
 
-def generate_unique_pickup_code(db: Session, max_attempts: int = 100) -> str:
+def generate_unique_lookup_code(db: Session, max_attempts: int = 100) -> str:
     """
-    生成唯一的取件码
+    生成唯一的6位查找码（用于数据库存储）
     
     参数：
     - db: 数据库会话
     - max_attempts: 最大尝试次数（防止无限循环）
     
     返回：
-    - 唯一的12位取件码（前6位查找码+后6位密钥码）
+    - 唯一的6位查找码（只存储到数据库，不包含密钥码）
     
     异常：
-    - RuntimeError: 如果尝试多次后仍无法生成唯一取件码
+    - RuntimeError: 如果尝试多次后仍无法生成唯一查找码
     """
+    chars = string.ascii_uppercase + string.digits
     for _ in range(max_attempts):
-        code = generate_pickup_code()
-        # 检查数据库中是否已存在（使用完整12位码）
-        existing = db.query(PickupCode).filter(PickupCode.code == code).first()
+        lookup_code = ''.join(random.choice(chars) for _ in range(6))
+        # 检查数据库中是否已存在（只检查6位查找码）
+        existing = db.query(PickupCode).filter(PickupCode.code == lookup_code).first()
         if not existing:
-            return code
+            return lookup_code
     
-    raise RuntimeError(f"无法生成唯一取件码，已尝试 {max_attempts} 次")
+    raise RuntimeError(f"无法生成唯一查找码，已尝试 {max_attempts} 次")
+
+
+def generate_unique_pickup_code(db: Session, max_attempts: int = 100) -> tuple[str, str]:
+    """
+    生成完整的12位取件码（前端使用）
+    
+    参数：
+    - db: 数据库会话
+    - max_attempts: 最大尝试次数（防止无限循环）
+    
+    返回：
+    - (lookup_code, full_code) 元组
+      - lookup_code: 6位查找码（存储到数据库）
+      - full_code: 12位完整取件码（前6位查找码+后6位密钥码，返回给前端）
+    
+    异常：
+    - RuntimeError: 如果尝试多次后仍无法生成唯一查找码
+    """
+    # 生成唯一的6位查找码（存储到数据库）
+    lookup_code = generate_unique_lookup_code(db, max_attempts)
+    
+    # 生成6位密钥码（只在客户端使用，不存储到数据库）
+    chars = string.ascii_uppercase + string.digits
+    key_code = ''.join(random.choice(chars) for _ in range(6))
+    
+    # 组合成12位完整取件码（返回给前端）
+    full_code = lookup_code + key_code
+    
+    return lookup_code, full_code
 
 
 def extract_lookup_code(full_code: str) -> str:
