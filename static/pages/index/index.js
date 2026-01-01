@@ -404,8 +404,11 @@ async function receiveFile() {
     showLoading(true, '正在连接...');
     
     try {
-        // 先查询取件码状态，获取文件信息
-        const statusResponse = await fetch(`${CONFIG.API_BASE}/v1/codes/${code}/status`);
+        // 提取前6位查找码（只发送查找码到服务器，不暴露后6位密钥码）
+        const lookupCode = code.substring(0, 6);
+        
+        // 先查询取件码状态，获取文件信息（只发送6位查找码）
+        const statusResponse = await fetch(`${CONFIG.API_BASE}/v1/codes/${lookupCode}/status`);
         if (!statusResponse.ok) {
             const errorData = await statusResponse.json().catch(() => ({}));
             throw new Error(errorData.msg || '取件码不存在或已失效');
@@ -615,7 +618,9 @@ async function updateStatusFromServer() {
     if (!CONFIG.pickupCode || !CONFIG.API_BASE) return;
     
     try {
-        const response = await fetch(`${CONFIG.API_BASE}/v1/codes/${CONFIG.pickupCode}/status`);
+        // 提取前6位查找码（只发送查找码到服务器，不暴露后6位密钥码）
+        const lookupCode = CONFIG.pickupCode.substring(0, 6);
+        const response = await fetch(`${CONFIG.API_BASE}/v1/codes/${lookupCode}/status`);
         if (!response.ok) {
             return; // 静默失败，不显示错误
         }

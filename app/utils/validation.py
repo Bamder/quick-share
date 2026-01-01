@@ -4,7 +4,24 @@ from typing import Optional
 
 def validate_pickup_code(code: str) -> bool:
     """
-    验证取件码格式
+    验证取件码格式（服务器端：只接收6位查找码）
+    
+    规则：6位大写字母或数字（查找码）
+    正则：^[A-Z0-9]{6}$
+    
+    示例：
+    - ABC123 ✓
+    - WAIT01 ✓
+    - abc123 ✗ (小写)
+    - ABC12 ✗ (5位)
+    """
+    pattern = r'^[A-Z0-9]{6}$'
+    return bool(re.match(pattern, code))
+
+
+def validate_full_pickup_code(code: str) -> bool:
+    """
+    验证完整取件码格式（前端使用：12位）
     
     规则：12位大写字母或数字（前6位查找码+后6位密钥码）
     正则：^[A-Z0-9]{12}$

@@ -6,7 +6,8 @@
 import { formatFileSize, reconstructFileFromChunks } from '../utils/file-utils.js';
 import { 
   decryptChunk,
-  decryptKeyWithPickupCode
+  decryptKeyWithPickupCode,
+  extractLookupCode
 } from '../utils/encryption-utils.js';
 
 class ReceiverService {
@@ -57,7 +58,12 @@ class ReceiverService {
       throw new Error('文件正在下载中，请等待完成');
     }
 
+    // 保存完整的12位取件码（用于解密）
     this.pickupCode = pickupCode.toUpperCase();
+    
+    // 提取前6位查找码（只发送查找码到服务器，不暴露后6位密钥码）
+    this.lookupCode = extractLookupCode(this.pickupCode);
+    
     this.isDownloading = true;
     this.receivedChunks = [];
 
@@ -138,7 +144,7 @@ class ReceiverService {
    */
   async getEncryptedKey() {
     const response = await fetch(
-      `${this.apiBase}/relay/codes/${this.pickupCode}/encrypted-key`
+      `${this.apiBase}/relay/codes/${this.lookupCode}/encrypted-key`
     );
 
     if (!response.ok) {
@@ -160,7 +166,7 @@ class ReceiverService {
    */
   async getFileInfo() {
     const response = await fetch(
-      `${this.apiBase}/relay/codes/${this.pickupCode}/file-info`
+      `${this.apiBase}/relay/codes/${this.lookupCode}/file-info`
     );
 
     if (!response.ok) {
@@ -188,7 +194,7 @@ class ReceiverService {
    */
   async downloadChunk(chunkIndex) {
     const response = await fetch(
-      `${this.apiBase}/relay/codes/${this.pickupCode}/download-chunk/${chunkIndex}`
+      `${this.apiBase}/relay/codes/${this.lookupCode}/download-chunk/${chunkIndex}`
     );
 
     if (!response.ok) {
@@ -218,7 +224,7 @@ class ReceiverService {
   async notifyDownloadComplete() {
     try {
       const response = await fetch(
-        `${this.apiBase}/relay/codes/${this.pickupCode}/download-complete`,
+        `${this.apiBase}/relay/codes/${this.lookupCode}/download-complete`,
         {
           method: 'POST',
           headers: {

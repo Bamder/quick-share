@@ -10,7 +10,8 @@ import {
   exportKeyToBase64, 
   encryptChunk, 
   calculateChunkHash,
-  encryptKeyWithPickupCode
+  encryptKeyWithPickupCode,
+  extractLookupCode
 } from '../utils/encryption-utils.js';
 
 class SenderService {
@@ -70,7 +71,12 @@ class SenderService {
       throw new Error('文件正在上传中，请等待完成');
     }
 
+    // 保存完整的12位取件码（用于加密）
     this.pickupCode = pickupCode.toUpperCase();
+    
+    // 提取前6位查找码（只发送查找码到服务器，不暴露后6位密钥码）
+    this.lookupCode = extractLookupCode(this.pickupCode);
+    
     this.currentFile = file;
     this.isSending = true;
     this.currentChunkIndex = 0;
@@ -104,7 +110,7 @@ class SenderService {
         formData.append('chunk_data', encryptedChunk, `chunk_${i}.encrypted`);
         
         const response = await fetch(
-          `${this.apiBase}/relay/codes/${this.pickupCode}/upload-chunk?chunk_index=${i}`,
+          `${this.apiBase}/relay/codes/${this.lookupCode}/upload-chunk?chunk_index=${i}`,
           {
             method: 'POST',
             body: formData
@@ -174,7 +180,7 @@ class SenderService {
   async storeEncryptedKey(encryptedKeyBase64) {
     try {
       const response = await fetch(
-        `${this.apiBase}/relay/codes/${this.pickupCode}/store-encrypted-key`,
+        `${this.apiBase}/relay/codes/${this.lookupCode}/store-encrypted-key`,
         {
           method: 'POST',
           headers: {
@@ -204,7 +210,7 @@ class SenderService {
   async notifyUploadComplete() {
     try {
       const response = await fetch(
-        `${this.apiBase}/relay/codes/${this.pickupCode}/upload-complete`,
+        `${this.apiBase}/relay/codes/${this.lookupCode}/upload-complete`,
         {
           method: 'POST',
           headers: {
