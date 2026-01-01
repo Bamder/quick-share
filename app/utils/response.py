@@ -36,9 +36,9 @@ def created_response(data: Any = None, msg: str = "创建成功") -> dict:
     }
 
 
-def not_found_response(msg: str = "资源不存在") -> dict:
+def not_found_response(msg: str = "资源不存在", data: Any = None) -> dict:
     """资源不存在响应"""
-    return error_response(404, msg)
+    return error_response(404, msg, data)
 
 
 def bad_request_response(msg: str = "请求参数错误") -> dict:

@@ -7,7 +7,7 @@ class PickupCode(BaseModel):
     """取件码表（关联文件，控制访问）"""
     __tablename__ = "pickup_codes"
 
-    code = Column(String(6), primary_key=True, comment="6位取件码（大写字母+数字）")
+    code = Column(String(12), primary_key=True, comment="12位取件码（前6位查找码+后6位密钥码，大写字母+数字）")
     file_id = Column(Integer, ForeignKey("files.id", ondelete="CASCADE"), nullable=False, comment="关联文件ID")
     status = Column(
         Enum("waiting", "transferring", "completed", "expired"),
