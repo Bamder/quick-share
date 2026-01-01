@@ -38,8 +38,8 @@ export function getFileIcon(filename) {
 }
 
 /**
- * 将文件分割成块（用于 WebRTC 传输）
- * @param {File} file 要分割的文件
+ * 将文件分割成块（用于传输）
+ * @param {File|Blob} file 要分割的文件
  * @param {number} chunkSize 每个块的大小（字节），默认64KB
  * @returns {Array<Blob>} 文件块数组
  */
@@ -57,13 +57,13 @@ export function splitFileIntoChunks(file, chunkSize = 64 * 1024) {
 }
 
 /**
- * 从块重建文件（用于 WebRTC 接收）
+ * 从块重建文件
  * @param {Array<Blob>} chunks 文件块数组
- * @param {string} fileName 文件名
+ * @param {string} fileName 文件名（可选，用于下载）
  * @param {string} mimeType MIME类型
  * @returns {Blob} 重建的文件Blob
  */
-export function reconstructFileFromChunks(chunks, fileName, mimeType) {
+export function reconstructFileFromChunks(chunks, fileName = null, mimeType = 'application/octet-stream') {
     return new Blob(chunks, { type: mimeType });
 }
 
