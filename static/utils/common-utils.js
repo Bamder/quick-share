@@ -6,6 +6,116 @@
 // ========== UI 工具 ==========
 
 /**
+ * 显示确认对话框
+ * @param {string} title - 标题
+ * @param {string} message - 消息内容
+ * @param {string} confirmText - 确认按钮文字
+ * @param {string} cancelText - 取消按钮文字
+ * @returns {Promise<boolean>} 用户选择（true=确认，false=取消）
+ */
+export function showConfirmDialog(title, message, confirmText = '确认', cancelText = '取消') {
+    return new Promise((resolve) => {
+        // 创建遮罩层
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 10000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        `;
+
+        // 创建对话框
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            animation: slideIn 0.3s ease;
+        `;
+
+        dialog.innerHTML = `
+            <h3 style="margin: 0 0 16px 0; font-size: 1.3rem; color: #212529;">${title}</h3>
+            <p style="margin: 0 0 24px 0; color: #6c757d; line-height: 1.6; white-space: pre-line;">${message}</p>
+            <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                <button class="cancel-btn" style="
+                    padding: 10px 20px;
+                    border: 2px solid #dee2e6;
+                    background: white;
+                    color: #6c757d;
+                    border-radius: 8px;
+                    cursor: pointer;
+                    font-weight: 600;
+                    transition: all 0.2s;
+                ">${cancelText}</button>
+                <button class="confirm-btn" style="
+                    padding: 10px 20px;
+                    border: none;
+                    background: linear-gradient(135deg, #4361ee, #7209b7);
+                    color: white;
+                    border-radius: 8px;
+                    cursor: pointer;
+                    font-weight: 600;
+                    transition: all 0.2s;
+                ">${confirmText}</button>
+            </div>
+        `;
+
+        // 添加按钮样式
+        const confirmBtn = dialog.querySelector('.confirm-btn');
+        const cancelBtn = dialog.querySelector('.cancel-btn');
+
+        confirmBtn.onmouseover = () => {
+            confirmBtn.style.transform = 'translateY(-2px)';
+            confirmBtn.style.boxShadow = '0 6px 20px rgba(67, 97, 238, 0.3)';
+        };
+        confirmBtn.onmouseout = () => {
+            confirmBtn.style.transform = '';
+            confirmBtn.style.boxShadow = '';
+        };
+
+        cancelBtn.onmouseover = () => {
+            cancelBtn.style.background = '#f8f9fa';
+        };
+        cancelBtn.onmouseout = () => {
+            cancelBtn.style.background = 'white';
+        };
+
+        // 事件处理
+        const handleConfirm = () => {
+            document.body.removeChild(overlay);
+            resolve(true);
+        };
+
+        const handleCancel = () => {
+            document.body.removeChild(overlay);
+            resolve(false);
+        };
+
+        confirmBtn.onclick = handleConfirm;
+        cancelBtn.onclick = handleCancel;
+        overlay.onclick = (e) => {
+            if (e.target === overlay) {
+                handleCancel();
+            }
+        };
+
+        dialog.appendChild(confirmBtn);
+        dialog.appendChild(cancelBtn);
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+    });
+}
+
+/**
  * 显示消息提示
  * @param {string} message 消息内容
  * @param {string} type 消息类型：success, error, info, warning

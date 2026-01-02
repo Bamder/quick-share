@@ -15,7 +15,7 @@ class ReceiverService {
     // 服务器中转相关
     this.pickupCode = null;               // 十二位取件码（前6位查找码+后6位密钥码）
     this.apiBase = '';                    // API服务器基础URL
-    this.encryptionKey = null;             // 解密密钥
+    this.encryptionKey = null;             // 文件加密密钥（原始密钥，用于解密文件块，不是密钥码）
     this.fileInfo = null;                 // 文件元信息
     
     // 回调函数
@@ -68,14 +68,15 @@ class ReceiverService {
     this.receivedChunks = [];
 
     try {
-      // 1. 从服务器获取加密后的文件加密密钥
-      console.log('[Receiver] 从服务器获取加密密钥...');
-      const encryptedKey = await this.getEncryptedKey();
+      // 1. 从服务器获取加密后的文件加密密钥（带重试机制）
+      // 注意：这是用取件码的密钥码派生密钥加密后的文件加密密钥，不是密钥码本身
+      console.log('[Receiver] 从服务器获取加密后的文件加密密钥...');
+      const encryptedKey = await this.getEncryptedKeyWithRetry();
       
-      // 2. 使用取件码解密文件加密密钥
-      console.log('[Receiver] 使用取件码解密文件密钥...');
+      // 2. 使用取件码的密钥码（后6位）派生密钥，解密文件加密密钥（原始密钥）
+      console.log('[Receiver] 使用取件码的密钥码派生密钥，解密文件加密密钥（原始密钥）...');
       this.encryptionKey = await decryptKeyWithPickupCode(encryptedKey, this.pickupCode);
-      console.log('[Receiver] ✓ 文件加密密钥已解密');
+      console.log('[Receiver] ✓ 文件加密密钥（原始密钥）已解密，可用于解密文件块');
 
       // 2. 获取文件信息
       console.log('[Receiver] 获取文件信息...');
@@ -89,6 +90,12 @@ class ReceiverService {
 
       // 3. 初始化接收数组
       this.receivedChunks = new Array(fileInfo.totalChunks);
+
+      // 3.5. 连接建立完成，通知前端关闭连接遮罩
+      // 此时进度为0，但连接已建立，可以开始下载
+      if (this.onProgress) {
+        this.onProgress(0, 0, fileInfo.totalChunks, null); // 传递null表示连接完成，开始下载
+      }
 
       // 4. 下载所有加密块
       console.log('[Receiver] 开始下载加密文件块...');
@@ -139,8 +146,54 @@ class ReceiverService {
   }
 
   /**
+   * 从服务器获取加密后的文件加密密钥（带重试机制）
+   * 
+   * 注意：这是用取件码的密钥码派生密钥加密后的文件加密密钥（原始密钥）
+   * 不是密钥码本身，也不是未加密的文件加密密钥
+   * 
+   * 如果密钥尚未上传完成，会等待并重试
+   * 
+   * @param {number} maxRetries - 最大重试次数（默认30次，约30秒）
+   * @param {number} retryInterval - 重试间隔（毫秒，默认1000ms）
+   * @returns {Promise<string>} 加密后的文件加密密钥（Base64编码）
+   */
+  async getEncryptedKeyWithRetry(maxRetries = 30, retryInterval = 1000) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const encryptedKey = await this.getEncryptedKey();
+        if (attempt > 1) {
+          console.log(`[Receiver] ✓ 加密密钥已可用（第 ${attempt} 次尝试）`);
+        }
+        return encryptedKey;
+      } catch (error) {
+        // 如果是"加密密钥不存在"错误，继续重试
+        if (error.message && error.message.includes('加密密钥不存在')) {
+          if (attempt < maxRetries) {
+            console.log(`[Receiver] 等待加密密钥上传完成... (${attempt}/${maxRetries})`);
+            // 通知进度回调（如果有）
+            if (this.onProgress) {
+              this.onProgress(0, 0, 0, `等待上传完成... (${attempt}/${maxRetries})`);
+            }
+            await new Promise(resolve => setTimeout(resolve, retryInterval));
+            continue;
+          } else {
+            throw new Error('等待加密密钥超时，发送方可能尚未完成上传');
+          }
+        } else {
+          // 其他错误直接抛出
+          throw error;
+        }
+      }
+    }
+    throw new Error('获取加密密钥失败：超过最大重试次数');
+  }
+
+  /**
    * 从服务器获取加密后的文件加密密钥
-   * @returns {Promise<string>} 加密后的密钥（Base64）
+   * 
+   * 注意：这是用取件码的密钥码派生密钥加密后的文件加密密钥（原始密钥）
+   * 
+   * @returns {Promise<string>} 加密后的文件加密密钥（Base64编码）
    */
   async getEncryptedKey() {
     const response = await fetch(
@@ -206,15 +259,17 @@ class ReceiverService {
     const encryptedChunk = await response.blob();
     this.receivedChunks[chunkIndex] = encryptedChunk;
 
-    // 更新进度
-    const receivedCount = this.receivedChunks.filter(chunk => chunk !== undefined).length;
-    const progress = (receivedCount / this.receivedChunks.length) * 100;
+    // 更新进度（确保进度值有效）
+    const receivedCount = this.receivedChunks.filter(chunk => chunk !== undefined && chunk !== null).length;
+    const totalChunks = this.receivedChunks.length;
+    const progress = totalChunks > 0 ? (receivedCount / totalChunks) * 100 : 0;
     
+    // 调用进度回调（不传递message，表示正常下载进度）
     if (this.onProgress) {
-      this.onProgress(progress, receivedCount, this.receivedChunks.length);
+      this.onProgress(progress, receivedCount, totalChunks, null);
     }
 
-    console.log(`[Receiver] ✓ 块 ${chunkIndex + 1}/${this.receivedChunks.length} 下载成功 (${progress.toFixed(1)}%)`);
+    console.log(`[Receiver] ✓ 块 ${chunkIndex + 1}/${totalChunks} 下载成功 (${progress.toFixed(1)}%)`);
   }
 
   /**

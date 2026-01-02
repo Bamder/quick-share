@@ -41,9 +41,9 @@ def not_found_response(msg: str = "资源不存在", data: Any = None) -> dict:
     return error_response(404, msg, data)
 
 
-def bad_request_response(msg: str = "请求参数错误") -> dict:
+def bad_request_response(msg: str = "请求参数错误", data: Any = None) -> dict:
     """请求参数错误响应"""
-    return error_response(400, msg)
+    return error_response(400, msg, data)
 
 
 def rate_limit_response(retry_after: int = 60) -> dict:
