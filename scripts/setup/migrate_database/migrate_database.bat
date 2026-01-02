@@ -367,8 +367,9 @@ echo ========================================
 echo    第五步：执行数据库迁移
 echo ========================================
 echo.
-echo [信息] 正在检查并执行数据库迁移（alembic upgrade head）...
+echo [信息] 正在执行数据库迁移（alembic upgrade head）...
 echo [提示] 这将应用所有待执行的迁移脚本，更新数据库结构
+echo [提示] 如果检测到版本不匹配错误（Can't locate revision），将自动尝试修复
 echo.
 
 :: 检查 alembic 是否可用
@@ -382,35 +383,128 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: 执行迁移
-alembic upgrade head
-if errorlevel 1 (
+:: 执行迁移（捕获错误输出）
+alembic upgrade head > "!TEMP_FILE!_migration.log" 2>&1
+set MIGRATION_RESULT=!errorlevel!
+
+if !MIGRATION_RESULT! neq 0 (
     echo.
     echo ========================================
     echo    [错误] 数据库迁移失败
     echo ========================================
     echo.
+    
+    :: 显示错误信息
+    if exist "!TEMP_FILE!_migration.log" (
+        type "!TEMP_FILE!_migration.log"
+        echo.
+    )
+    
+    :: 检查是否是版本不匹配错误
+    set "IS_VERSION_ERROR=false"
+    if exist "!TEMP_FILE!_migration.log" (
+        findstr /C:"Can't locate revision" "!TEMP_FILE!_migration.log" >nul 2>&1
+        if !errorlevel! equ 0 (
+            set "IS_VERSION_ERROR=true"
+        )
+    )
+    
+    if "!IS_VERSION_ERROR!"=="true" (
+        echo ========================================
+        echo    [检测] 版本不匹配错误
+        echo ========================================
+        echo.
+        echo [说明] 检测到 "Can't locate revision" 错误
+        echo [说明] 这通常发生在迁移文件被删除或重新创建后。
+        echo [说明] 数据库中的版本记录与当前的迁移文件不匹配。
+        echo.
+        echo [注意] 虽然之前的版本检查显示通过，但实际迁移时发现版本不匹配。
+        echo [注意] 这可能是因为版本检查时使用了不同的配置或连接。
+        echo.
+        set /p AUTO_FIX="是否自动尝试修复版本不匹配？(Y/N，默认: Y): "
+        if "!AUTO_FIX!"=="" set "AUTO_FIX=Y"
+        
+        if /i "!AUTO_FIX!"=="Y" (
+            echo.
+            echo [信息] 正在自动修复版本不匹配...
+            cd /d "!PROJECT_ROOT!"
+            python "!SCRIPT_DIR!\check_and_fix_alembic_version.py" auto-fix > "!TEMP_FILE!" 2>&1
+            set FIX_RESULT=!errorlevel!
+            cd /d "!PROJECT_ROOT!"
+            
+            if !FIX_RESULT! equ 0 (
+                if exist "!TEMP_FILE!" (
+                    for /f "usebackq delims=" %%a in ("!TEMP_FILE!") do (
+                        set "LINE=%%a"
+                        if "!LINE:~0,7!"=="RESULT|" (
+                            echo [成功] !LINE:~7!
+                        )
+                    )
+                    del "!TEMP_FILE!" >nul 2>&1
+                )
+                echo.
+                echo [信息] 版本已修复，正在重新尝试迁移...
+                echo.
+                alembic upgrade head
+                if !errorlevel! equ 0 (
+                    echo.
+                    echo [成功] 迁移成功！
+                    :: 清理临时文件
+                    if exist "!TEMP_FILE!_migration.log" del "!TEMP_FILE!_migration.log" >nul 2>&1
+                    goto :migration_success
+                ) else (
+                    echo.
+                    echo [错误] 修复后迁移仍然失败
+                    echo [提示] 请查看上方的错误信息
+                )
+            ) else (
+                echo [错误] 自动修复失败
+                if exist "!TEMP_FILE!" (
+                    echo [错误详情]:
+                    type "!TEMP_FILE!"
+                    del "!TEMP_FILE!" >nul 2>&1
+                )
+            )
+        ) else (
+            echo [提示] 已跳过自动修复
+        )
+        echo.
+    )
+    
+    :: 清理临时文件
+    if exist "!TEMP_FILE!_migration.log" del "!TEMP_FILE!_migration.log" >nul 2>&1
+    
     echo 可能的原因：
     echo 1. MySQL 服务未运行
     echo 2. 有未安装的依赖软件库（如 pymysql）
     echo 3. alembic.ini 中的 url 配置错误（用户名、密码、主机、端口）
     echo 4. 数据库连接失败（Access denied 表示用户名或密码错误）
     echo 5. 数据库不存在
+    echo 6. Alembic 版本不匹配（Can't locate revision identified by 'xxx'）
     echo.
     echo 常见错误解决：
     echo - "Access denied"：用户名或密码错误，请检查 alembic.ini 中的配置
     echo - "Can't connect"：MySQL 服务未运行，请启动服务
     echo - "Unknown database"：数据库不存在，请先创建数据库
     echo - "ModuleNotFoundError: No module named 'pymysql'"：未安装依赖，请运行 pip install -r requirements.txt
+    echo - "Can't locate revision identified by 'xxx'"：版本不匹配，请运行版本修复脚本
+    echo    python scripts\setup\migrate_database\check_and_fix_alembic_version.py auto-fix
     echo.
     echo 当前 alembic.ini 配置：
     findstr /C:"sqlalchemy.url" alembic.ini 2>nul
     echo.
     echo 建议将完整的报错信息复制到 AI 工具中分析解决
     echo.
+    echo.
+    echo [失败] 数据库迁移失败
+    echo.
+    echo [状态] 迁移未完成，请根据上述错误信息解决问题后重新运行脚本
+    echo.
     pause
     exit /b 1
 )
+
+:migration_success
 echo.
 echo [成功] 数据库迁移成功
 echo.
@@ -429,8 +523,12 @@ echo 如果显示数据库表列表，则表示迁移成功。
 echo.
 
 echo ========================================
-echo    迁移流程完成！
+echo    [完成] 迁移流程成功完成！
 echo ========================================
 echo.
+echo [状态] 所有步骤已成功执行
+echo [提示] 数据库已准备就绪，可以开始使用
+echo.
 pause
+exit /b 0
 
