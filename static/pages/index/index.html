@@ -69,6 +69,18 @@
                             <span id="fileSize"></span>
                         </div>
                     </div>
+                    <div class="progress-container" id="sendProgressBar" style="display:none">
+                        <div class="progress-header">
+                            <span>上传进度</span>
+                            <span id="sendProgressPercent">0%</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="sendProgressFill"></div>
+                        </div>
+                    </div>
+                    <div class="upload-complete-badge" id="uploadCompleteBadge">
+                        文件已成功上传，可以分享取件码了
+                    </div>
                     <div class="share-options">
                         <div class="option">
                             <label>有效期：</label>
@@ -91,6 +103,9 @@
                     </div>
                     <button id="shareBtn" class="btn btn-primary" disabled>
                         <i class="icon-generate"></i> 生成取件码
+                    </button>
+                    <button id="invalidateBtn" class="btn btn-warning" style="display:none; margin-top: 10px;" title="作废当前文件的取件码">
+                        <i class="icon-report"></i> 终止文件分享
                     </button>
                 </section>
 

@@ -7,20 +7,22 @@ import { splitFileIntoChunks } from '../utils/file-utils.js';
 import { generateSessionId } from '../utils/common-utils.js';
 import { 
   generateEncryptionKey, 
-  exportKeyToBase64, 
-  encryptChunk, 
+  exportKeyToBase64,
+  importKeyFromBase64,
+  encryptChunk,
   calculateChunkHash,
   encryptKeyWithPickupCode,
   extractLookupCode
 } from '../utils/encryption-utils.js';
+import { getKeyFromCache, storeKeyInCache } from '../utils/key-cache.js';
 
 class SenderService {
   constructor() {
     // 服务器中转相关
     this.pickupCode = null;              // 十二位取件码（前6位查找码+后6位密钥码）
     this.apiBase = '';                   // API服务器基础URL
-    this.encryptionKey = null;           // 加密密钥（客户端生成）
-    this.encryptionKeyBase64 = null;     // 加密密钥Base64（已废弃，不再使用）
+    this.encryptionKey = null;           // 文件加密密钥（原始密钥，用于加密文件块，不是密钥码）
+    this.encryptionKeyBase64 = null;     // 文件加密密钥Base64（用于浏览器缓存，已废弃，不再使用）
     
     // 回调函数
     this.onProgress = null;              // 发送进度
@@ -54,7 +56,7 @@ class SenderService {
    * @param {File} file - 要上传的文件
    * @returns {Promise<string>} 返回加密密钥的Base64（用于分享给接收者）
    */
-  async uploadFileViaRelay(pickupCode, file) {
+  async uploadFileViaRelay(pickupCode, file, fileHash = null, expireHours = 24 * 7) {
     if (!this.apiBase) {
       throw new Error('API基础URL未设置，请先调用init()方法');
     }
@@ -82,11 +84,27 @@ class SenderService {
     this.currentChunkIndex = 0;
 
     try {
-      // 1. 生成加密密钥（客户端生成，不发送到服务器）
-      console.log('[Sender] 生成加密密钥...');
-      this.encryptionKey = await generateEncryptionKey();
-      this.encryptionKeyBase64 = await exportKeyToBase64(this.encryptionKey);
-      console.log('[Sender] ✓ 加密密钥已生成');
+      // 1. 生成或获取文件加密密钥（原始密钥，用于加密文件块）
+      // 注意：这是文件加密密钥，不是取件码的密钥码（后6位）
+      if (fileHash) {
+        const cachedKeyBase64 = getKeyFromCache(fileHash);
+        if (cachedKeyBase64) {
+          console.log('[Sender] 从缓存获取文件加密密钥（原始密钥）...');
+          this.encryptionKey = await importKeyFromBase64(cachedKeyBase64);
+          this.encryptionKeyBase64 = cachedKeyBase64;
+          console.log('[Sender] ✓ 使用缓存的文件加密密钥（原始密钥）');
+        } else {
+          console.log('[Sender] 缓存中无密钥，生成新的文件加密密钥（原始密钥）...');
+          this.encryptionKey = await generateEncryptionKey();
+          this.encryptionKeyBase64 = await exportKeyToBase64(this.encryptionKey);
+          console.log('[Sender] ✓ 文件加密密钥（原始密钥）已生成');
+        }
+      } else {
+        console.log('[Sender] 无文件哈希，生成新的文件加密密钥（原始密钥）...');
+        this.encryptionKey = await generateEncryptionKey();
+        this.encryptionKeyBase64 = await exportKeyToBase64(this.encryptionKey);
+        console.log('[Sender] ✓ 文件加密密钥（原始密钥）已生成');
+      }
 
       // 2. 将文件分割成块
       console.log('[Sender] 分割文件为块...');
@@ -94,9 +112,55 @@ class SenderService {
       this.fileChunks = chunks;
       console.log(`[Sender] ✓ 文件已分割为 ${chunks.length} 个块`);
 
-      // 3. 上传每个加密块
+      // 2.5. 检查文件块是否已存在（复用旧文件块，避免重复上传）
+      let existingChunks = [];
+      let missingChunks = [];
+      try {
+        console.log('[Sender] 检查文件块是否已存在...');
+        const checkUrl = `${this.apiBase}/relay/codes/${this.lookupCode}/check-chunks?total_chunks=${chunks.length}`;
+        const checkResponse = await fetch(checkUrl);
+        if (checkResponse.ok) {
+          const checkResult = await checkResponse.json();
+          if (checkResult.code === 200 && checkResult.data) {
+            existingChunks = checkResult.data.existingChunks || [];
+            missingChunks = checkResult.data.missingChunks || [];
+            console.log(`[Sender] ✓ 文件块检查完成: ${existingChunks.length} 个已存在, ${missingChunks.length} 个需要上传`);
+            if (existingChunks.length > 0) {
+              console.log(`[Sender] 将复用 ${existingChunks.length} 个已存在的文件块，跳过上传`);
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('[Sender] 检查文件块失败，将上传所有块:', error);
+        // 如果检查失败，上传所有块
+        missingChunks = Array.from({ length: chunks.length }, (_, i) => i);
+      }
+
+      // 如果没有检查结果，默认上传所有块
+      if (missingChunks.length === 0 && existingChunks.length === 0) {
+        missingChunks = Array.from({ length: chunks.length }, (_, i) => i);
+      }
+
+      // 2.6. 通知开始上传（显示初始进度0%）
+      if (this.onProgress) {
+        this.onProgress(0, 0, chunks.length);
+      }
+
+      // 3. 上传缺失的文件块（跳过已存在的块）
       console.log('[Sender] 开始上传加密文件块...');
-      for (let i = 0; i < chunks.length; i++) {
+      let uploadedCount = existingChunks.length; // 已存在的块也算作已上传
+      
+      // 先更新已存在块的进度
+      if (existingChunks.length > 0) {
+        const progress = (existingChunks.length / chunks.length) * 100;
+        if (this.onProgress) {
+          this.onProgress(progress, existingChunks.length, chunks.length);
+          console.log(`[Sender] 进度更新: ${progress.toFixed(1)}% (${existingChunks.length}/${chunks.length} 已复用)`);
+        }
+      }
+      
+      // 上传缺失的块
+      for (const i of missingChunks) {
         const chunk = chunks[i];
         
         // 加密文件块
@@ -108,9 +172,12 @@ class SenderService {
         // 上传到服务器
         const formData = new FormData();
         formData.append('chunk_data', encryptedChunk, `chunk_${i}.encrypted`);
+        formData.append('chunk_index', i.toString()); // 将 chunk_index 作为 Form 数据传递
+        
+        const uploadUrl = `${this.apiBase}/relay/codes/${this.lookupCode}/upload-chunk`;
         
         const response = await fetch(
-          `${this.apiBase}/relay/codes/${this.lookupCode}/upload-chunk?chunk_index=${i}`,
+          uploadUrl,
           {
             method: 'POST',
             body: formData
@@ -127,29 +194,44 @@ class SenderService {
           throw new Error(result.msg || `上传块 ${i} 失败`);
         }
 
-        // 验证服务器返回的哈希
-        if (result.data.chunkHash !== chunkHash) {
-          throw new Error(`块 ${i} 哈希验证失败，数据可能损坏`);
+        // 如果服务器返回 reused=true，说明块已存在（通过映射表复用）
+        if (result.data.reused) {
+          console.log(`[Sender] ✓ 块 ${i + 1}/${chunks.length} 已复用（跳过上传）`);
+        } else {
+          // 验证服务器返回的哈希（只有新上传的块才需要验证）
+          if (result.data.chunkHash !== chunkHash) {
+            throw new Error(`块 ${i} 哈希验证失败，数据可能损坏`);
+          }
+          console.log(`[Sender] ✓ 块 ${i + 1}/${chunks.length} 上传成功`);
         }
 
-        this.currentChunkIndex = i + 1;
+        uploadedCount++;
+        this.currentChunkIndex = uploadedCount;
         
-        // 更新进度
-        const progress = ((i + 1) / chunks.length) * 100;
+        // 更新进度（在每个块上传完成后立即更新）
+        const progress = (uploadedCount / chunks.length) * 100;
         if (this.onProgress) {
-          this.onProgress(progress, i + 1, chunks.length);
+          this.onProgress(progress, uploadedCount, chunks.length);
+          console.log(`[Sender] 进度更新: ${progress.toFixed(1)}% (${uploadedCount}/${chunks.length})`);
         }
-
-        console.log(`[Sender] ✓ 块 ${i + 1}/${chunks.length} 上传成功 (${progress.toFixed(1)}%)`);
       }
 
       console.log('[Sender] ✓ 所有文件块上传完成');
 
-      // 4. 使用取件码加密文件加密密钥，并存储到服务器
-      console.log('[Sender] 使用取件码加密文件密钥...');
+      // 4. 使用取件码的密钥码（后6位）派生密钥，加密文件加密密钥（原始密钥），并存储到服务器
+      // 注意：这里使用取件码的密钥码派生密钥来加密文件加密密钥，不是直接用密钥码
+      console.log('[Sender] 使用取件码的密钥码派生密钥，加密文件加密密钥（原始密钥）...');
       const encryptedKey = await encryptKeyWithPickupCode(this.encryptionKey, this.pickupCode);
+      console.log('[Sender] 文件加密密钥（原始密钥）已加密，准备存储到服务器...');
       await this.storeEncryptedKey(encryptedKey);
-      console.log('[Sender] ✓ 加密密钥已存储到服务器');
+      console.log('[Sender] ✓ 加密后的文件加密密钥已存储到服务器');
+      
+      // 4.5. 存储密钥到浏览器缓存（以文件哈希为键）
+      if (fileHash && this.encryptionKeyBase64) {
+        // 使用取件码的过期时间（从参数传入）
+        storeKeyInCache(fileHash, this.encryptionKeyBase64, expireHours);
+        console.log(`[Sender] ✓ 加密密钥已存储到浏览器缓存（过期时间: ${expireHours}小时）`);
+      }
 
       // 5. 通知服务器上传完成
       await this.notifyUploadComplete();
@@ -173,12 +255,17 @@ class SenderService {
   }
 
   /**
-   * 存储加密后的密钥到服务器
-   * @param {string} encryptedKeyBase64 用取件码加密后的密钥
+   * 存储加密后的文件加密密钥到服务器
+   * 
+   * 注意：这里存储的是用取件码的密钥码派生密钥加密后的文件加密密钥（原始密钥）
+   * 不是密钥码本身，也不是未加密的文件加密密钥
+   * 
+   * @param {string} encryptedKeyBase64 用取件码的密钥码派生密钥加密后的文件加密密钥（Base64编码）
    * @returns {Promise<void>}
    */
   async storeEncryptedKey(encryptedKeyBase64) {
     try {
+      console.log(`[Sender] 正在存储加密密钥到服务器 (lookupCode: ${this.lookupCode})...`);
       const response = await fetch(
         `${this.apiBase}/relay/codes/${this.lookupCode}/store-encrypted-key`,
         {
@@ -193,13 +280,23 @@ class SenderService {
       );
 
       if (!response.ok) {
-        throw new Error(`存储加密密钥失败: HTTP ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+        const errorMsg = errorData.msg || `存储加密密钥失败: HTTP ${response.status}`;
+        console.error(`[Sender] ✗ 存储加密密钥失败: ${errorMsg}`, errorData);
+        throw new Error(errorMsg);
+      }
+
+      const result = await response.json();
+      if (result.code !== 200) {
+        console.error(`[Sender] ✗ 存储加密密钥失败: ${result.msg}`, result);
+        throw new Error(result.msg || '存储加密密钥失败');
       }
 
       console.log('[Sender] ✓ 加密密钥已存储到服务器');
     } catch (error) {
-      console.warn('[Sender] 存储加密密钥失败:', error);
-      // 不抛出错误，因为文件已经上传完成
+      console.error('[Sender] ✗ 存储加密密钥失败:', error);
+      // 抛出错误，因为Receiver需要这个密钥才能解密文件
+      throw error;
     }
   }
 

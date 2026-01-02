@@ -85,18 +85,23 @@ async def validation_exception_handler(request, exc: RequestValidationError):
     body = None
     try:
         # 注意：request.body() 只能读取一次，如果已经读取过会返回空
-        # 这里尝试从异常对象中获取
-        if hasattr(exc, 'body'):
+        # 检查 content-type，如果是 multipart/form-data，不尝试解析为 JSON
+        content_type = request.headers.get("content-type", "")
+        if "multipart/form-data" in content_type:
+            # FormData 请求，不尝试解析为 JSON
+            body = "<FormData>"
+        elif hasattr(exc, 'body'):
             body = exc.body
         else:
-            # 如果异常对象没有 body，尝试从请求中读取
-            body_bytes = await request.body()
-            if body_bytes:
-                import json
-                body = json.loads(body_bytes.decode('utf-8'))
+            # 尝试从请求中读取（仅限 JSON 请求）
+            if "application/json" in content_type:
+                body_bytes = await request.body()
+                if body_bytes:
+                    import json
+                    body = json.loads(body_bytes.decode('utf-8'))
     except Exception as e:
         logger.warning(f"无法读取请求体: {e}")
-        pass
+        body = "<无法解析>"
     
     error_details = []
     for error in exc.errors():

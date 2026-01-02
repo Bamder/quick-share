@@ -10,8 +10,10 @@ import {
     isValidPickupCode,
     generatePickupCode,
     formatRemainingTime,
-    testPortConnection
+    testPortConnection,
+    showConfirmDialog
 } from '/static/utils/common-utils.js';
+import { cleanupExpiredKeys, getKeyFromCache, storeKeyInCache, removeKeyFromCache, storePickupCodeInCache, getPickupCodeFromCache, removePickupCodeFromCache } from '/static/utils/key-cache.js';
 
 // 导入服务（使用导出的单例实例）
 import { senderService as importedSenderService } from '/static/service/sender-service.js';
@@ -24,6 +26,9 @@ const CONFIG = {
     pickupCode: '',
     fileSize: 0,
     fileName: '',
+    fileId: null,  // 文件ID（用于作废功能）
+    fileHash: null,  // 文件哈希（用于密钥缓存）
+    expireHours: 24,  // 过期时间（小时，用于密钥缓存）
     pollingInterval: null,
     encryptionKey: null  // 加密密钥（用于分享给接收者）
 };
@@ -40,6 +45,9 @@ import { loadModalHTML, openModal, closeModal, initModalEvents } from '/static/c
 export { openModal, closeModal };
 
 document.addEventListener('DOMContentLoaded', async function() {
+    // 清理过期的密钥缓存
+    cleanupExpiredKeys();
+    
     // 先加载弹窗HTML
     await loadModalHTML();
     
@@ -65,6 +73,48 @@ function initEventListeners() {
     document.getElementById('receiveBtn').onclick = receiveFile;
     document.getElementById('reportBtn').onclick = reportFile;
     document.getElementById('testBtn').onclick = testPortConnectionHandler;
+    
+    // 作废文件记录按钮
+    const invalidateBtn = document.getElementById('invalidateBtn');
+    if (invalidateBtn) {
+        invalidateBtn.onclick = async function() {
+            if (!CONFIG.fileId) {
+                showMessage('没有可作废的文件记录', 'warning');
+                return;
+            }
+            
+            const confirmed = await showConfirmDialog(
+                '确认作废',
+                `确定要作废文件 "${CONFIG.fileName}" 的所有取件码吗？\n\n此操作不可逆，所有取件码将立即失效。`,
+                '确认作废',
+                '取消'
+            );
+            
+            if (confirmed) {
+                // 先撤销上传完成的提示
+                clearUploadCompleteUI();
+                
+                try {
+                    await invalidateFileRecord(CONFIG.fileId);
+                    // 删除缓存的密钥
+                    if (CONFIG.fileHash) {
+                        removeKeyFromCache(CONFIG.fileHash);
+                    }
+                    showMessage('文件记录已作废，所有取件码已失效', 'success');
+                    // 隐藏作废按钮
+                    invalidateBtn.style.display = 'none';
+                    // 重置CONFIG
+                    CONFIG.fileId = null;
+                    CONFIG.fileHash = null;
+                    CONFIG.pickupCode = '';
+                    CONFIG.fileName = '';
+                    CONFIG.fileSize = 0;
+                } catch (error) {
+                    showMessage(`作废失败: ${error.message}`, 'error');
+                }
+            }
+        };
+    }
     
     // 注意：弹窗事件已在 modal.js 中初始化，这里不需要重复绑定
     
@@ -239,7 +289,17 @@ async function generatePickupCodeHandler() {
         if (CONFIG.localFile.type && CONFIG.localFile.type.trim() !== '') {
             requestData.mimeType = CONFIG.localFile.type.trim();
         }
-        // hash 暂时不计算，不添加到请求中（使用默认值 null）
+        // 计算文件哈希（用于文件去重和密钥缓存）
+        try {
+            const { calculateFileHash } = await import('/static/utils/encryption-utils.js');
+            CONFIG.fileHash = await calculateFileHash(CONFIG.localFile);
+            requestData.hash = CONFIG.fileHash;
+            console.log('文件哈希计算完成:', CONFIG.fileHash.substring(0, 16) + '...');
+        } catch (error) {
+            console.warn('计算文件哈希失败，将使用文件名+大小进行去重:', error);
+            CONFIG.fileHash = null;
+            // 如果哈希计算失败，不传递hash，后端将使用文件名+大小进行去重
+        }
         
         console.log('发送创建取件码请求:', requestData);
         
@@ -257,8 +317,95 @@ async function generatePickupCodeHandler() {
             try {
                 errorData = await response.json();
                 console.error('API 错误响应:', errorData);
+                console.error('错误响应状态码:', response.status);
+                console.error('错误响应data:', errorData.data);
+                console.error('错误响应完整结构:', JSON.stringify(errorData, null, 2));
             } catch (e) {
                 console.error('解析错误响应失败:', e);
+            }
+            
+            // 处理文件已存在的情况
+            // 检查错误码是否为 FILE_ALREADY_EXISTS
+            if (response.status === 400) {
+                // 检查 errorData.data.code 或 errorData.code
+                const errorCode = errorData.data?.code || errorData.code;
+                console.log('检查错误码:', errorCode, '是否为 FILE_ALREADY_EXISTS:', errorCode === 'FILE_ALREADY_EXISTS');
+                console.log('errorData.data:', errorData.data);
+                console.log('errorData.data?.code:', errorData.data?.code);
+                console.log('errorData.code:', errorData.code);
+                
+                // 尝试多种方式匹配错误码
+                const isFileExists = errorCode === 'FILE_ALREADY_EXISTS' || 
+                                   errorData.data?.code === 'FILE_ALREADY_EXISTS' ||
+                                   (errorData.msg && errorData.msg.includes('已创建过未过期的取件码'));
+                
+                console.log('是否匹配文件已存在错误:', isFileExists);
+                
+                if (isFileExists) {
+                    // 检查是否有密钥缓存和取件码缓存
+                    const hasCachedKey = requestData.hash ? getKeyFromCache(requestData.hash) !== null : false;
+                    const oldPickupCode = requestData.hash ? getPickupCodeFromCache(requestData.hash) : null;
+                    console.log('密钥缓存检查:', { hasCachedKey, fileHash: requestData.hash ? requestData.hash.substring(0, 16) + '...' : null, oldPickupCode: oldPickupCode ? oldPickupCode.substring(0, 6) + '****' : null });
+                    
+                    let dialogTitle, dialogMessage, confirmText;
+                    if (hasCachedKey && oldPickupCode) {
+                        // 有缓存密钥和旧取件码，可以复用旧密钥重新生成取件码
+                        dialogTitle = '文件已存在';
+                        dialogMessage = `该文件已创建过未过期的取件码（旧取件码: ${oldPickupCode}）。\n\n选择操作：\n• 重新生成（复用旧文件密钥）：无需重新上传文件，旧的取件码仍然可以下载\n• 取消：不进行任何操作`;
+                        confirmText = '重新生成（复用旧文件密钥）';
+                    } else {
+                        // 没有缓存密钥或旧取件码，需要作废旧文件记录
+                        dialogTitle = '文件已存在但密钥丢失';
+                        dialogMessage = `该文件已存在未过期的取件码，但本地缓存丢失旧文件密钥。\n\n选择操作：\n• 重新生成（生成全新取件码）：重新上传文件，旧的取件码将无法下载\n• 取消：不进行任何操作`;
+                        confirmText = '重新生成（生成全新取件码）';
+                    }
+                    
+                    // 显示确认弹窗，让用户决定是否重新生成
+                    console.log('显示确认弹窗:', { dialogTitle, dialogMessage });
+                    const shouldRegenerate = await showConfirmDialog(
+                        dialogTitle,
+                        dialogMessage,
+                        confirmText,
+                        '取消'
+                    );
+                    
+                    console.log('用户选择:', shouldRegenerate ? confirmText : '取消');
+                    
+                    if (shouldRegenerate) {
+                        const fileId = errorData.data?.fileId || errorData.fileId;
+                        if (fileId) {
+                            try {
+                                if (hasCachedKey && oldPickupCode) {
+                                    // 有缓存密钥和旧取件码：复用旧密钥，只需作废旧取件码，保留文件记录和密钥
+                                    console.log('复用旧密钥重新生成取件码, fileId:', fileId);
+                                    await invalidateFileRecord(fileId);
+                                    // 注意：不删除缓存的密钥和取件码，这样上传时会自动使用旧密钥
+                                    console.log('重新调用创建取件码（将复用缓存的密钥，通过映射表复用文件块，无需重新上传）');
+                                    return await generatePickupCodeHandler();
+                                } else {
+                                    // 没有缓存密钥或旧取件码：作废旧文件记录，生成新密钥
+                                    console.log('作废旧文件记录并生成新密钥, fileId:', fileId);
+                                    await invalidateFileRecord(fileId);
+                                    // 删除缓存的密钥和取件码（如果存在）
+                                    if (requestData.hash) {
+                                        removeKeyFromCache(requestData.hash);
+                                        removePickupCodeFromCache(requestData.hash);
+                                    }
+                                    console.log('重新调用创建取件码（将生成新密钥，需要重新上传文件块）');
+                                    return await generatePickupCodeHandler();
+                                }
+                            } catch (error) {
+                                throw new Error(`作废旧文件记录失败: ${error.message}`);
+                            }
+                        } else {
+                            throw new Error('无法获取文件ID，无法重新生成');
+                        }
+                    } else {
+                        // 用户取消
+                        showMessage('已取消重新生成取件码', 'info');
+                        return;
+                    }
+                }
             }
             
             // 422 错误通常是验证错误，显示详细错误信息
@@ -285,7 +432,98 @@ async function generatePickupCodeHandler() {
         
         const result = await response.json();
         
-        if (result.code !== 201 || !result.data) {
+        // 检查响应体中的 code 字段（后端可能返回 HTTP 200 但 code 不是 201）
+        if (result.code !== 201) {
+            // 处理文件已存在的情况（后端返回 code: 400）
+            if (result.code === 400) {
+                const errorCode = result.data?.code || result.code;
+                console.log('检查响应体错误码:', errorCode, '是否为 FILE_ALREADY_EXISTS:', errorCode === 'FILE_ALREADY_EXISTS');
+                console.log('result.data:', result.data);
+                console.log('result.msg:', result.msg);
+                
+                // 尝试多种方式匹配错误码
+                const isFileExists = errorCode === 'FILE_ALREADY_EXISTS' || 
+                                   result.data?.code === 'FILE_ALREADY_EXISTS' ||
+                                   (result.msg && result.msg.includes('已创建过未过期的取件码'));
+                
+                console.log('是否匹配文件已存在错误:', isFileExists);
+                
+                if (isFileExists) {
+                    // 检查是否有密钥缓存和取件码缓存
+                    const hasCachedKey = requestData.hash ? getKeyFromCache(requestData.hash) !== null : false;
+                    const oldPickupCode = requestData.hash ? getPickupCodeFromCache(requestData.hash) : null;
+                    console.log('密钥缓存检查:', { hasCachedKey, fileHash: requestData.hash ? requestData.hash.substring(0, 16) + '...' : null, oldPickupCode: oldPickupCode ? oldPickupCode.substring(0, 6) + '****' : null });
+                    
+                    let dialogTitle, dialogMessage, confirmText;
+                    if (hasCachedKey && oldPickupCode) {
+                        // 有缓存密钥和旧取件码，可以复用旧密钥重新生成取件码
+                        // 注意：通过映射表机制，复用旧密钥时无需重新上传文件块
+                        dialogTitle = '文件已存在';
+                        dialogMessage = `该文件已创建过未过期的取件码（旧取件码: ${oldPickupCode}）。\n\n选择操作：\n• 重新生成（复用旧文件密钥）：无需重新上传文件，旧的取件码仍然可以下载\n• 取消：不进行任何操作`;
+                        confirmText = '重新生成（复用旧文件密钥）';
+                    } else {
+                        // 没有缓存密钥或旧取件码，需要作废旧文件记录
+                        dialogTitle = '文件已存在但密钥丢失';
+                        dialogMessage = `该文件已存在未过期的取件码，但本地缓存丢失旧文件密钥。\n\n选择操作：\n• 重新生成（生成全新取件码）：重新上传文件，旧的取件码将无法下载\n• 取消：不进行任何操作`;
+                        confirmText = '重新生成（生成全新取件码）';
+                    }
+                    
+                    // 显示确认弹窗，让用户决定是否重新生成
+                    console.log('显示确认弹窗:', { dialogTitle, dialogMessage });
+                    const shouldRegenerate = await showConfirmDialog(
+                        dialogTitle,
+                        dialogMessage,
+                        confirmText,
+                        '取消'
+                    );
+                    
+                    console.log('用户选择:', shouldRegenerate ? confirmText : '取消');
+                    
+                    if (shouldRegenerate) {
+                        const fileId = result.data?.fileId || result.fileId;
+                        if (fileId) {
+                            try {
+                                if (hasCachedKey && oldPickupCode) {
+                                    // 有缓存密钥和旧取件码：复用旧密钥，只需作废旧取件码，保留文件记录和密钥
+                                    // 注意：通过映射表机制，复用旧密钥时无需重新上传文件块
+                                    console.log('复用旧密钥重新生成取件码, fileId:', fileId);
+                                    await invalidateFileRecord(fileId);
+                                    // 注意：不删除缓存的密钥和取件码，这样上传时会自动使用旧密钥
+                                    // 重新调用创建取件码（会自动使用缓存的密钥，通过映射表复用文件块，无需重新上传）
+                                    console.log('重新调用创建取件码（将复用缓存的密钥，通过映射表复用文件块，无需重新上传）');
+                                    return await generatePickupCodeHandler();
+                                } else {
+                                    // 没有缓存密钥或旧取件码：作废旧文件记录，生成新密钥
+                                    console.log('作废旧文件记录并生成新密钥, fileId:', fileId);
+                                    await invalidateFileRecord(fileId);
+                                    // 删除缓存的密钥和取件码（如果存在）
+                                    if (requestData.hash) {
+                                        removeKeyFromCache(requestData.hash);
+                                        removePickupCodeFromCache(requestData.hash);
+                                    }
+                                    // 重新调用创建取件码（将生成新密钥，需要重新上传文件块）
+                                    console.log('重新调用创建取件码（将生成新密钥，需要重新上传文件块）');
+                                    return await generatePickupCodeHandler();
+                                }
+                            } catch (error) {
+                                throw new Error(`作废旧文件记录失败: ${error.message}`);
+                            }
+                        } else {
+                            throw new Error('无法获取文件ID，无法重新生成');
+                        }
+                    } else {
+                        // 用户取消
+                        showMessage('已取消重新生成取件码', 'info');
+                        return;
+                    }
+                }
+            }
+            
+            // 如果不是文件已存在错误，抛出通用错误
+            throw new Error(result.msg || '创建取件码失败');
+        }
+        
+        if (!result.data) {
             throw new Error(result.msg || '创建取件码失败');
         }
         
@@ -293,6 +531,24 @@ async function generatePickupCodeHandler() {
         CONFIG.pickupCode = result.data.code;
         CONFIG.fileName = result.data.fileName;
         CONFIG.fileSize = result.data.fileSize;
+        
+        // 保存文件ID和过期时间到CONFIG，用于作废功能和密钥缓存
+        if (result.data.fileId) {
+            CONFIG.fileId = result.data.fileId;
+            // 显示作废按钮
+            const invalidateBtn = document.getElementById('invalidateBtn');
+            if (invalidateBtn) {
+                invalidateBtn.style.display = 'block';
+            }
+        }
+        
+        // 保存过期时间（用于密钥缓存）
+        CONFIG.expireHours = requestData.expireHours || 24;
+        
+        // 缓存完整的12位取件码（以文件哈希为键），用于后续显示旧取件码
+        if (CONFIG.fileHash && CONFIG.pickupCode) {
+            storePickupCodeInCache(CONFIG.fileHash, CONFIG.pickupCode, CONFIG.expireHours);
+        }
         
         // 更新取件码显示并打开弹窗
         const pickupCodeElement = document.getElementById('pickupCode');
@@ -303,9 +559,6 @@ async function generatePickupCodeHandler() {
             openModal('codeModal');
         }
         
-        // 初始化 SenderService 并注册
-        await initializeSenderService();
-        
         // 更新状态显示（使用服务器返回的数据）
         updateStatusDisplayFromServer(result.data);
         
@@ -315,12 +568,30 @@ async function generatePickupCodeHandler() {
         // 保存状态
         saveCurrentState();
         
-        showMessage('取件码已生成，分享给朋友吧！', 'success');
+        // 关闭遮罩（创建取件码的短过程已完成）
+        showLoading(false);
+        showMessage('取件码已生成，正在上传文件...', 'success');
+        
+        // 初始化 SenderService 并上传文件（长过程，不使用遮罩，让用户看到进度条）
+        await initializeSenderService();
         
     } catch (error) {
         console.error('创建取件码失败:', error);
-        showMessage(`创建取件码失败: ${error.message}`, 'error');
+        // 改进错误提示：显示更友好的错误信息
+        let errorMessage = error.message;
+        if (errorMessage.includes('已创建过未过期的取件码')) {
+            // 这个错误已经在弹窗中处理了，不需要再次显示
+            return;
+        } else if (errorMessage.includes('数据验证失败')) {
+            errorMessage = '请求数据格式错误，请刷新页面重试';
+        } else if (errorMessage.includes('网络') || errorMessage.includes('fetch')) {
+            errorMessage = '网络连接失败，请检查网络后重试';
+        } else if (errorMessage.includes('超时')) {
+            errorMessage = '请求超时，请稍后重试';
+        }
+        showMessage(`创建取件码失败: ${errorMessage}`, 'error');
     } finally {
+        // 确保遮罩被关闭
         showLoading(false);
         if (shareBtn) {
             shareBtn.disabled = false;
@@ -400,6 +671,18 @@ async function receiveFile() {
         receiveBtn.innerHTML = '<i class="icon-receive"></i> 领取中...';
     }
     
+    // 隐藏保存按钮（下载完成前不显示）
+    const downloadLink = document.getElementById('downloadLink');
+    if (downloadLink) {
+        downloadLink.style.display = 'none';
+    }
+    
+    // 隐藏进度条（重新开始时重置）
+    const progressBar = document.getElementById('recvProgressBar');
+    if (progressBar) {
+        progressBar.style.display = 'none';
+    }
+    
     // 显示加载动画
     showLoading(true, '正在连接...');
     
@@ -434,7 +717,20 @@ async function receiveFile() {
         
     } catch (error) {
         console.error('接收文件失败:', error);
-        showMessage(`接收失败: ${error.message}`, 'error');
+        // 改进错误提示
+        let errorMessage = error.message;
+        if (errorMessage.includes('网络') || errorMessage.includes('fetch')) {
+            errorMessage = '网络连接失败，请检查网络后重试';
+        } else if (errorMessage.includes('超时')) {
+            errorMessage = '下载超时，请稍后重试';
+        } else if (errorMessage.includes('加密') || errorMessage.includes('密钥')) {
+            errorMessage = '文件解密失败，请检查取件码是否正确';
+        } else if (errorMessage.includes('不存在') || errorMessage.includes('已过期')) {
+            // 保持原错误信息
+        } else {
+            errorMessage = '下载失败，请稍后重试';
+        }
+        showMessage(`接收失败: ${errorMessage}`, 'error');
         showLoading(false);
         if (receiveBtn) {
             receiveBtn.disabled = false;
@@ -450,34 +746,104 @@ async function initializeSenderService() {
     }
     
     try {
+        // 显示上传进度条
+        const sendProgressBar = document.getElementById('sendProgressBar');
+        const sendProgressFill = document.getElementById('sendProgressFill');
+        const sendProgressPercent = document.getElementById('sendProgressPercent');
+        
+        if (sendProgressBar) {
+            sendProgressBar.style.display = 'block';
+        }
+        
+        // 初始化进度条为0%
+        if (sendProgressFill) {
+            sendProgressFill.style.width = '0%';
+        }
+        if (sendProgressPercent) {
+            sendProgressPercent.textContent = '0%';
+        }
+        
         // 初始化服务
         senderService.init(`${CONFIG.API_BASE}/v1`, {
             onProgress: (progress, sent, total) => {
                 console.log(`上传进度: ${progress.toFixed(1)}% (${sent}/${total})`);
-                // 可以在这里更新上传进度显示（如果需要）
+                
+                // 更新上传进度条
+                if (sendProgressFill) {
+                    sendProgressFill.style.width = `${progress}%`;
+                }
+                if (sendProgressPercent) {
+                    sendProgressPercent.textContent = `${progress.toFixed(1)}%`;
+                }
             },
             onComplete: () => {
                 console.log('文件上传完成');
+                
+                // 更新进度条到100%
+                if (sendProgressFill) {
+                    sendProgressFill.style.width = '100%';
+                    sendProgressFill.classList.add('completed');
+                }
+                if (sendProgressPercent) {
+                    sendProgressPercent.textContent = '100%';
+                }
+                
+                // 标记进度容器为完成状态
+                if (sendProgressBar) {
+                    sendProgressBar.classList.add('completed');
+                    const headerText = sendProgressBar.querySelector('.progress-header span:first-child');
+                    if (headerText) {
+                        headerText.textContent = '上传完成';
+                    }
+                }
+                
+                // 显示完成标记
+                const uploadCompleteBadge = document.getElementById('uploadCompleteBadge');
+                if (uploadCompleteBadge) {
+                    uploadCompleteBadge.classList.add('show');
+                }
+                
                 showMessage('文件已成功上传，等待接收方下载', 'success');
             },
             onError: (error) => {
                 console.error('上传错误:', error);
-                showMessage(`上传失败: ${error.message}`, 'error');
+                // 改进错误提示
+                let errorMessage = error.message;
+                if (errorMessage.includes('网络') || errorMessage.includes('fetch')) {
+                    errorMessage = '网络连接失败，请检查网络后重试';
+                } else if (errorMessage.includes('超时')) {
+                    errorMessage = '上传超时，请稍后重试';
+                } else if (errorMessage.includes('加密')) {
+                    errorMessage = '文件加密失败，请刷新页面重试';
+                }
+                showMessage(`上传失败: ${errorMessage}`, 'error');
             }
         });
         
-        // 通过服务器中转上传文件（使用端到端加密）
-        console.log('[Sender] 开始上传文件（服务器中转模式）...');
-        showMessage('正在上传文件...', 'info');
+        // 使用已计算的文件哈希和过期时间（用于密钥缓存）
+        // 文件哈希和过期时间在创建取件码时已经计算并保存到 CONFIG
         
-        await senderService.uploadFileViaRelay(CONFIG.pickupCode, CONFIG.localFile);
+        // 通过服务器中转上传文件（使用端到端加密）
+        // 注意：不使用遮罩，让用户看到上传进度条的变化
+        console.log('[Sender] 开始上传文件（服务器中转模式）...');
+        
+        await senderService.uploadFileViaRelay(CONFIG.pickupCode, CONFIG.localFile, CONFIG.fileHash, CONFIG.expireHours || 24);
         
         console.log('[Sender] ✓ 文件上传完成');
-        showMessage('文件上传完成！请将取件码分享给接收方', 'success');
+        // 上传完成的提示已经在 onComplete 回调中显示，这里不需要重复显示
         
     } catch (error) {
         console.error('初始化SenderService失败:', error);
-        showMessage(`初始化发送服务失败: ${error.message}`, 'error');
+        // 改进错误提示
+        let errorMessage = error.message;
+        if (errorMessage.includes('网络') || errorMessage.includes('fetch')) {
+            errorMessage = '网络连接失败，请检查网络后重试';
+        } else if (errorMessage.includes('超时')) {
+            errorMessage = '上传超时，请稍后重试';
+        } else if (errorMessage.includes('加密')) {
+            errorMessage = '文件加密失败，请刷新页面重试';
+        }
+        showMessage(`上传失败: ${errorMessage}`, 'error');
     }
 }
 
@@ -493,24 +859,53 @@ async function initializeReceiverService(code, fileInfo) {
     try {
         // 显示文件信息
         const progressBar = document.getElementById('recvProgressBar');
-        const progressFill = document.querySelector('.progress-fill');
+        // 注意：使用更精确的选择器，选择接收区域的进度条填充元素
+        const progressFill = progressBar ? progressBar.querySelector('.progress-fill') : null;
         const progressPercent = document.getElementById('progressPercent');
         
+        // 隐藏保存按钮（下载完成前不显示）
+        const downloadLink = document.getElementById('downloadLink');
+        if (downloadLink) {
+            downloadLink.style.display = 'none';
+        }
+        
+        // 初始化进度条
         if (progressBar) {
             progressBar.style.display = 'block';
+        }
+        if (progressFill) {
+            progressFill.style.width = '0%';
+        }
+        if (progressPercent) {
+            progressPercent.textContent = '0%';
         }
         
         // 初始化服务
         receiverService.init(`${CONFIG.API_BASE}/v1`, {
-            onProgress: (progress, received, total) => {
-                console.log(`下载进度: ${progress.toFixed(1)}% (${received}/${total})`);
+            onProgress: (progress, received, total, message) => {
+                console.log(`下载进度: ${progress.toFixed(1)}% (${received}/${total})`, message || '');
                 
-                // 更新进度条
-                if (progressFill) {
-                    progressFill.style.width = `${progress}%`;
-                }
-                if (progressPercent) {
-                    progressPercent.textContent = `${progress.toFixed(1)}%`;
+                // 如果有等待消息，显示在进度条上（连接建立阶段）
+                if (message !== null && message !== undefined) {
+                    if (progressPercent) {
+                        progressPercent.textContent = message;
+                    }
+                    // 保持遮罩显示，不更新进度条宽度
+                } else {
+                    // 连接建立完成（message为null/undefined）或开始下载（progress > 0）
+                    // 关闭连接遮罩，显示进度条
+                    if (message === null || message === undefined || progress > 0) {
+                        showLoading(false); // 关闭连接遮罩，让进度条可见
+                    }
+                    
+                    // 更新进度条（确保进度值有效）
+                    const validProgress = Math.max(0, Math.min(100, progress || 0));
+                    if (progressFill) {
+                        progressFill.style.width = `${validProgress}%`;
+                    }
+                    if (progressPercent) {
+                        progressPercent.textContent = `${validProgress.toFixed(1)}%`;
+                    }
                 }
             },
             onComplete: (fileBlob) => {
@@ -524,7 +919,7 @@ async function initializeReceiverService(code, fileInfo) {
                     progressPercent.textContent = '100%';
                 }
                 
-                // 显示下载链接
+                // 显示下载链接（保存按钮）
                 const downloadLink = document.getElementById('downloadLink');
                 if (downloadLink) {
                     downloadLink.style.display = 'block';
@@ -532,7 +927,12 @@ async function initializeReceiverService(code, fileInfo) {
                         e.preventDefault();
                         downloadBlob(fileBlob, fileInfo.fileName);
                     };
-                    downloadLink.textContent = `下载 ${fileInfo.fileName}`;
+                    downloadLink.textContent = `保存 ${fileInfo.fileName}`;
+                }
+                
+                // 确保保存按钮可见
+                if (downloadLink) {
+                    downloadLink.style.display = 'block';
                 }
                 
                 showMessage('文件下载完成，可以保存了', 'success');
@@ -559,10 +959,13 @@ async function initializeReceiverService(code, fileInfo) {
         
         // 通过服务器中转下载文件（使用端到端解密）
         // 密钥会自动从服务器获取，并使用取件码解密
-        showLoading(true, '正在下载文件...');
+        // 只在建立连接时显示遮罩（获取密钥、获取文件信息阶段）
+        showLoading(true, '正在连接...');
         console.log('[Receiver] 开始下载文件（服务器中转模式）...');
         
         await receiverService.downloadFileViaRelay(code);
+        
+        // 下载开始后，遮罩会在onProgress回调中关闭（当progress > 0时）
         
     } catch (error) {
         console.error('初始化ReceiverService失败:', error);
@@ -1045,6 +1448,72 @@ if (typeof openModal === 'undefined') {
             document.body.style.overflow = '';
         }
     };
+}
+
+// ========== 清理上传完成UI ==========
+/**
+ * 清除上传完成的UI状态
+ */
+function clearUploadCompleteUI() {
+    // 清除上传进度条的完成状态
+    const sendProgressBar = document.getElementById('sendProgressBar');
+    const sendProgressFill = document.getElementById('sendProgressFill');
+    const sendProgressPercent = document.getElementById('sendProgressPercent');
+    
+    if (sendProgressBar) {
+        sendProgressBar.classList.remove('completed');
+        const headerText = sendProgressBar.querySelector('.progress-header span:first-child');
+        if (headerText) {
+            headerText.textContent = '上传进度';
+        }
+    }
+    
+    if (sendProgressFill) {
+        sendProgressFill.classList.remove('completed');
+        sendProgressFill.style.width = '0%';
+    }
+    
+    if (sendProgressPercent) {
+        sendProgressPercent.textContent = '0%';
+    }
+    
+    // 隐藏上传完成徽章
+    const uploadCompleteBadge = document.getElementById('uploadCompleteBadge');
+    if (uploadCompleteBadge) {
+        uploadCompleteBadge.classList.remove('show');
+    }
+    
+    console.log('[UI] 已清除上传完成状态');
+}
+
+// ========== 文件作废功能 ==========
+/**
+ * 作废文件记录
+ * @param {number} fileId - 文件ID
+ */
+async function invalidateFileRecord(fileId) {
+    if (!CONFIG.API_BASE) {
+        throw new Error('API基础URL未设置');
+    }
+    
+    const response = await fetch(`${CONFIG.API_BASE}/v1/codes/files/${fileId}/invalidate`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    });
+    
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.msg || `HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const result = await response.json();
+    if (result.code !== 200) {
+        throw new Error(result.msg || '作废文件记录失败');
+    }
+    
+    return result.data;
 }
 
 // ========== 页面卸载清理 ==========

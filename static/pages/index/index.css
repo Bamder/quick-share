@@ -257,6 +257,63 @@ body {
   border-radius: 5px;
 }
 
+/* 上传完成状态 */
+.progress-container.completed {
+  background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+  border: 2px solid #28a745;
+}
+
+.progress-container.completed .progress-header {
+  color: #155724;
+}
+
+.progress-container.completed .progress-header::after {
+  content: " ✓";
+  color: #28a745;
+  font-weight: bold;
+  font-size: 1.2em;
+}
+
+.progress-fill.completed {
+  background: linear-gradient(90deg, #28a745, #20c997);
+}
+
+/* 上传完成提示 */
+.upload-complete-badge {
+  display: none;
+  background: linear-gradient(135deg, #28a745, #20c997);
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+  margin-top: 15px;
+  text-align: center;
+  font-weight: 600;
+  font-size: 1.05rem;
+  box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
+  animation: slideInDown 0.5s ease;
+}
+
+.upload-complete-badge.show {
+  display: block;
+}
+
+.upload-complete-badge::before {
+  content: "✓ ";
+  font-size: 1.3em;
+  margin-right: 8px;
+}
+
+@keyframes slideInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* ====== 下载链接 ====== */
 .download-link {
   display: block;
