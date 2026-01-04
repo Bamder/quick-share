@@ -1,119 +1,124 @@
 <!DOCTYPE html>
 <html lang="zh-CN" class="welcome-page">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>QuickShare | 现代文件分享解决方案</title>
-    <link rel="stylesheet" href="/static/pages/welcome/welcome.css">
-</head>
-<body>
+    <link rel="stylesheet" href="/static/pages/welcome/welcome.css" />
+  </head>
+  <body>
     <!-- 背景装饰元素 -->
     <div class="welcome-background">
-        <div class="geometric-grid"></div>
-        <div class="decorative-line line-1"></div>
-        <div class="decorative-line line-2"></div>
-        <div class="decorative-line line-3"></div>
-        <div class="geometric-shape shape-1"></div>
-        <div class="geometric-shape shape-2"></div>
+      <div class="geometric-grid"></div>
+      <div class="decorative-line line-1"></div>
+      <div class="decorative-line line-2"></div>
+      <div class="decorative-line line-3"></div>
+      <div class="geometric-shape shape-1"></div>
+      <div class="geometric-shape shape-2"></div>
+    </div>
+
+    <!-- 用户状态区域 -->
+    <div class="user-status" id="userStatus">
+      <span class="visitor-text">游客</span>
+      <button class="login-btn" id="loginBtn">登录</button>
+      <button class="register-btn" id="registerBtn">注册</button>
     </div>
 
     <!-- 主要内容 -->
     <div class="welcome-container">
-        <div class="welcome-content">
-            <!-- 头部区域 -->
-            <header class="welcome-header">
-                <div class="logo-container">
-                    <div class="logo-badge">
-                        <div class="logo-icon">🚀</div>
-                    </div>
-                </div>
-                
-                <h1 class="welcome-title">
-                    <span class="gradient-text">QuickShare</span>
-                </h1>
-                
-                <p class="welcome-subtitle">
-                    快速、安全、简单的文件分享工具<br>
-                    无需注册，打开即用
-                </p>
-            </header>
+      <div class="welcome-content">
+        <!-- 头部区域 -->
+        <header class="welcome-header">
+          <div class="logo-container">
+            <div class="logo-badge">
+              <div class="logo-icon">🚀</div>
+            </div>
+          </div>
 
-            <!-- 特性展示 - 精简为3个 -->
-            <section class="features-section">
-                <h2 class="section-title">核心特性</h2>
-                
-                <div class="features-grid">
-                    <div class="feature-card">
-                        <div class="feature-icon">⚡</div>
-                        <h3 class="feature-title">极速传输</h3>
-                        <p class="feature-description">
-                            点对点直连技术，文件直接传输，无需经过服务器中转
-                        </p>
-                    </div>
-                    
-                    <div class="feature-card">
-                        <div class="feature-icon">🔒</div>
-                        <h3 class="feature-title">安全加密</h3>
-                        <p class="feature-description">
-                            AES-256端到端加密，取件码一次性有效，保护隐私安全
-                        </p>
-                    </div>
-                    
-                    <div class="feature-card">
-                        <div class="feature-icon">🎯</div>
-                        <h3 class="feature-title">简单易用</h3>
-                        <p class="feature-description">
-                            无需注册登录，拖拽上传，输入取件码即可领取文件
-                        </p>
-                    </div>
-                </div>
-            </section>
+          <h1 class="welcome-title">
+            <span class="gradient-text">QuickShare</span>
+          </h1>
 
-            <!-- 主要操作按钮 - 更突出 -->
-            <section class="cta-section">
-                <button id="startBtn" class="primary-button">
-                    立即开始传输
-                    <span class="button-icon">→</span>
-                </button>
-                <p class="cta-hint">
-                    点击开始您的第一次安全文件传输
-                </p>
-            </section>
+          <p class="welcome-subtitle">
+            快速、安全、简单的文件分享工具<br />
+            无需注册，打开即用
+          </p>
+        </header>
 
-            <!-- 统计数据 -->
-            <section class="stats-section">
-                <div class="stat-item">
-                    <span class="stat-value">2GB</span>
-                    <span class="stat-label">单文件上限</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-value">高</span>
-                    <span class="stat-label">加密等级</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-value">较少</span>
-                    <span class="stat-label">等待时间</span>
-                </div>
-            </section>
+        <!-- 特性展示 - 精简为3个 -->
+        <section class="features-section">
+          <h2 class="section-title">核心特性</h2>
 
-            <!-- 底部信息 -->
-            <footer class="welcome-footer">
-                <div class="footer-content">
-                    <p class="footer-text">
-                        © 2025 QuickShare 文件闪传系统<br>
-                        致力于构建更安全、更高效的数字化协作环境
-                    </p>
-                    
-                    <div class="footer-badges">
-                        <span class="badge">隐私优先</span>
-                        <span class="badge">完全免费</span>
-                        <span class="badge">开源项目</span>
-                    </div>
-                </div>
-            </footer>
-        </div>
+          <div class="features-grid">
+            <div class="feature-card">
+              <div class="feature-icon">⚡</div>
+              <h3 class="feature-title">极速传输</h3>
+              <p class="feature-description">
+                点对点直连技术，文件直接传输，无需经过服务器中转
+              </p>
+            </div>
+
+            <div class="feature-card">
+              <div class="feature-icon">🔒</div>
+              <h3 class="feature-title">安全加密</h3>
+              <p class="feature-description">
+                AES-256端到端加密，取件码一次性有效，保护隐私安全
+              </p>
+            </div>
+
+            <div class="feature-card">
+              <div class="feature-icon">🎯</div>
+              <h3 class="feature-title">简单易用</h3>
+              <p class="feature-description">
+                无需注册登录，拖拽上传，输入取件码即可领取文件
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- 主要操作按钮 - 更突出 -->
+        <section class="cta-section">
+          <button id="startBtn" class="primary-button">
+            立即开始传输
+            <span class="button-icon">→</span>
+          </button>
+          <p class="cta-hint">点击开始您的第一次安全文件传输</p>
+        </section>
+
+        <!-- 统计数据 -->
+        <section class="stats-section">
+          <div class="stat-item">
+            <span class="stat-value">2GB</span>
+            <span class="stat-label">单文件上限</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-value">高</span>
+            <span class="stat-label">加密等级</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-value">较少</span>
+            <span class="stat-label">等待时间</span>
+          </div>
+        </section>
+
+        <!-- 底部信息 -->
+        <footer class="welcome-footer">
+          <div class="footer-content">
+            <p class="footer-text">
+              © 2025 QuickShare 文件闪传系统<br />
+              致力于构建更安全、更高效的数字化协作环境
+            </p>
+
+            <div class="footer-badges">
+              <span class="badge">隐私优先</span>
+              <span class="badge">完全免费</span>
+              <span class="badge">开源项目</span>
+            </div>
+          </div>
+        </footer>
+      </div>
     </div>
 
-    <script src="/static/pages/welcome/welcome.js"></script>
-</body>
+    <script type="module" src="/static/pages/welcome/welcome.js"></script>
+  </body>
 </html>

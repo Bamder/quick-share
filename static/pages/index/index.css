@@ -1,5 +1,168 @@
 /* ====== index 页面特有样式 ====== */
 
+/* 用户状态区域 */
+.user-status {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.95rem;
+  z-index: 100;
+}
+
+/* 密码哈希测试区域 */
+.hash-test-section {
+  margin-top: 20px;
+}
+
+.hash-test-area {
+  padding: 20px;
+}
+
+.hash-test-area .form-group {
+  margin-bottom: 20px;
+}
+
+.hash-test-area .form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.hash-test-area .form-group input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 16px;
+  transition: all var(--transition-fast);
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+.hash-test-area .form-group input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+.hash-test-area .form-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.hash-test-area .btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.hash-test-area .btn-primary {
+  background-color: var(--color-primary);
+  color: white;
+}
+
+.hash-test-area .btn-primary:hover {
+  background-color: var(--color-primary-dark);
+  box-shadow: var(--shadow-md);
+}
+
+.hash-test-area .btn-secondary {
+  background-color: var(--color-surface);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.hash-test-area .btn-secondary:hover {
+  background-color: var(--color-surface-alt);
+  box-shadow: var(--shadow-md);
+}
+
+.hash-result {
+  background-color: var(--color-primary-light);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+  padding: 20px;
+  margin-top: 20px;
+}
+
+.hash-result h3 {
+  margin-top: 0;
+  margin-bottom: 15px;
+  color: var(--color-primary-dark);
+}
+
+.hash-result .result-content p {
+  margin: 10px 0;
+  color: var(--color-text-primary);
+}
+
+.hash-result .result-content strong {
+  color: var(--color-primary-dark);
+}
+
+.hash-result .result-content span {
+  word-break: break-all;
+  font-family: "Courier New", Courier, monospace;
+  background-color: var(--color-surface);
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--color-border);
+}
+
+.user-status .visitor-text {
+  color: #666;
+}
+
+.user-status .greeting {
+  color: #4361ee;
+  font-weight: 500;
+}
+
+.user-status button {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.user-status .login-btn {
+  background-color: #4361ee;
+  color: white;
+}
+
+.user-status .login-btn:hover {
+  background-color: #3a0ca3;
+}
+
+.user-status .register-btn {
+  background-color: #4cc9f0;
+  color: white;
+}
+
+.user-status .register-btn:hover {
+  background-color: #4361ee;
+}
+
+.user-status .logout-btn {
+  background-color: #f72585;
+  color: white;
+}
+
+.user-status .logout-btn:hover {
+  background-color: #b5179e;
+}
+
 body {
   background: linear-gradient(135deg, #f5f7fa 0%, #e4edf5 100%);
   min-height: 100vh;

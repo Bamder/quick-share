@@ -48,6 +48,70 @@
     --space-md: 1rem;
     --space-lg: 1.5rem;
     --space-xl: 2rem;
+}
+
+/* 用户状态区域 */
+.user-status {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 0.95rem;
+    z-index: 100;
+}
+
+.user-status .visitor-text {
+    color: var(--color-text-secondary);
+}
+
+.user-status .greeting {
+    color: var(--color-primary);
+    font-weight: 500;
+}
+
+.user-status button {
+    padding: 6px 12px;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    font-weight: 500;
+}
+
+.user-status .login-btn {
+    background-color: var(--color-primary);
+    color: white;
+}
+
+.user-status .login-btn:hover {
+    background-color: var(--color-primary-dark);
+    box-shadow: var(--shadow-md);
+}
+
+.user-status .register-btn {
+    background-color: var(--color-surface);
+    color: var(--color-primary);
+    border: 1px solid var(--color-border);
+}
+
+.user-status .register-btn:hover {
+    background-color: var(--color-primary-light);
+    box-shadow: var(--shadow-md);
+}
+
+.user-status .logout-btn {
+    background-color: var(--color-surface);
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border);
+}
+
+.user-status .logout-btn:hover {
+    background-color: var(--color-surface-alt);
+    box-shadow: var(--shadow-md);
+}
     --space-2xl: 3rem;
 }
 
