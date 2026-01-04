@@ -1,6 +1,7 @@
 from datetime import datetime
 from sqlalchemy import Column, String, Integer, Enum, DateTime, ForeignKey
 from .base import Base
+from sqlalchemy import Column, Integer, ForeignKey  # 确保导入
 
 
 class PickupCode(Base):
@@ -15,3 +16,4 @@ class PickupCode(Base):
     expire_at = Column(DateTime, nullable=False, comment='过期时间')
     created_at = Column(DateTime, comment='创建时间')
     updated_at = Column(DateTime, comment='更新时间')
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, comment='上传者用户ID（可选）')
