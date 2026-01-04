@@ -1,83 +1,247 @@
 <!-- 取件码状态弹窗 -->
-<div class="modal-overlay" id="codeModal" style="position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; display: none !important; visibility: hidden !important; opacity: 0 !important; z-index: 10000 !important; align-items: center !important; justify-content: center !important; background: rgba(0, 0, 0, 0.6) !important;">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h2><i class="icon-code"></i> 取件码状态</h2>
-            <button class="modal-close" id="closeCodeModal">×</button>
-        </div>
-        <div class="modal-body">
-            <div class="code-display">
-                <div class="code-value" id="pickupCode">XXXXXX</div>
-                <button id="copyCodeBtn" class="btn btn-secondary">
-                    <i class="icon-copy"></i> 复制
-                </button>
-            </div>
-            <div class="code-status">
-                <div class="status-item">
-                    <span class="status-label">剩余时间：</span>
-                    <span class="status-value" id="statTime">30:00</span>
-                </div>
-                <div class="status-item">
-                    <span class="status-label">文件大小：</span>
-                    <span class="status-value" id="statSize">0 MB</span>
-                </div>
-                <div class="status-item">
-                    <span class="status-label">领取状态：</span>
-                    <span class="status-value" id="statCount">0/3</span>
-                </div>
-                <div class="status-item">
-                    <span class="status-label">当前状态：</span>
-                    <span class="status-value" id="statStatus">等待中</span>
-                </div>
-            </div>
-            <button id="reportBtn" class="btn btn-warning">
-                <i class="icon-report"></i> 举报文件
-            </button>
-        </div>
+<div
+  class="modal-overlay"
+  id="codeModal"
+  style="
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    z-index: 10000 !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: rgba(0, 0, 0, 0.6) !important;
+  "
+>
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2><i class="icon-code"></i> 取件码状态</h2>
+      <button class="modal-close" id="closeCodeModal">×</button>
     </div>
+    <div class="modal-body">
+      <div class="code-display">
+        <div class="code-value" id="pickupCode">XXXXXX</div>
+        <button id="copyCodeBtn" class="btn btn-secondary">
+          <i class="icon-copy"></i> 复制
+        </button>
+      </div>
+      <div class="code-status">
+        <div class="status-item">
+          <span class="status-label">剩余时间：</span>
+          <span class="status-value" id="statTime">30:00</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">文件大小：</span>
+          <span class="status-value" id="statSize">0 MB</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">领取状态：</span>
+          <span class="status-value" id="statCount">0/3</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">当前状态：</span>
+          <span class="status-value" id="statStatus">等待中</span>
+        </div>
+      </div>
+      <button id="reportBtn" class="btn btn-warning">
+        <i class="icon-report"></i> 举报文件
+      </button>
+    </div>
+  </div>
 </div>
 
 <!-- 连接设置弹窗 -->
-<div class="modal-overlay" id="configModal" style="position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; display: none !important; visibility: hidden !important; opacity: 0 !important; z-index: 10000 !important; align-items: center !important; justify-content: center !important; background: rgba(0, 0, 0, 0.6) !important;">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h2><i class="icon-settings"></i> 连接设置</h2>
-
-        </div>
-        <div class="modal-body">
-            <div class="config-form">
-            <button class="modal-close" id="closeConfigModal">×</button>                <div class="input-group">
-                    <label>后端端口：</label>
-                    <input type="number" id="portInput" value="8000" min="1" max="65535">
-                </div>
-                <button id="testBtn" class="btn btn-secondary">
-                    <i class="icon-test"></i> 测试连接
-                </button>
-                <div class="test-result" id="portResult">
-                    <i class="icon-info"></i> 点击测试按钮检查连接
-                </div>
-            </div>
-            <div class="config-tips">
-                <h3><i class="icon-tip"></i> 使用提示</h3>
-                <ul>
-                    <li>确保后端服务已启动</li>
-                    <li>默认端口为8000</li>
-                    <li>连接成功后才能正常使用</li>
-                </ul>
-            </div>
-        </div>
+<div
+  class="modal-overlay"
+  id="configModal"
+  style="
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    z-index: 10000 !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: rgba(0, 0, 0, 0.6) !important;
+  "
+>
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2><i class="icon-settings"></i> 连接设置</h2>
     </div>
+    <div class="modal-body">
+      <div class="config-form">
+        <button class="modal-close" id="closeConfigModal">×</button>
+        <div class="input-group">
+          <label>后端端口：</label>
+          <input
+            type="number"
+            id="portInput"
+            value="8000"
+            min="1"
+            max="65535"
+          />
+        </div>
+        <button id="testBtn" class="btn btn-secondary">
+          <i class="icon-test"></i> 测试连接
+        </button>
+        <div class="test-result" id="portResult">
+          <i class="icon-info"></i> 点击测试按钮检查连接
+        </div>
+      </div>
+      <div class="config-tips">
+        <h3><i class="icon-tip"></i> 使用提示</h3>
+        <ul>
+          <li>确保后端服务已启动</li>
+          <li>默认端口为8000</li>
+          <li>连接成功后才能正常使用</li>
+        </ul>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- 侧边栏按钮 -->
-<div class="sidebar-buttons" style="position: fixed; right: 0; top: 50%; transform: translateY(-50%); z-index: 9999; display: flex; flex-direction: column; gap: 15px;">
-    <button class="sidebar-btn" id="codeSecBtn" title="取件码状态" style="background: linear-gradient(135deg, #4361ee, #7209b7); color: white; border: none; border-radius: 12px 0 0 12px; padding: 15px 12px; cursor: pointer; box-shadow: -2px 0 10px rgba(0,0,0,0.3); display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 65px; font-size: 0.85rem; font-weight: 600;">
-        <i class="icon-code" style="font-size: 1.4rem; display: block;">📋</i>
-        <span style="font-size: 0.7rem; display: block;">取件码</span>
-    </button>
-    <button class="sidebar-btn" id="configBtn" title="连接设置" style="background: linear-gradient(135deg, #4361ee, #7209b7); color: white; border: none; border-radius: 12px 0 0 12px; padding: 15px 12px; cursor: pointer; box-shadow: -2px 0 10px rgba(0,0,0,0.3); display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 65px; font-size: 0.85rem; font-weight: 600;">
-        <i class="icon-settings" style="font-size: 1.4rem; display: block;">⚙️</i>
-        <span style="font-size: 0.7rem; display: block;">连接</span>
-    </button>
+<div
+  class="sidebar-buttons"
+  style="
+    position: fixed;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+  "
+>
+  <button
+    class="sidebar-btn"
+    id="codeSecBtn"
+    title="取件码状态"
+    style="
+      background: linear-gradient(135deg, #4361ee, #7209b7);
+      color: white;
+      border: none;
+      border-radius: 12px 0 0 12px;
+      padding: 15px 12px;
+      cursor: pointer;
+      box-shadow: -2px 0 10px rgba(0, 0, 0, 0.3);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      min-width: 65px;
+      font-size: 0.85rem;
+      font-weight: 600;
+    "
+  >
+    <i class="icon-code" style="font-size: 1.4rem; display: block">📋</i>
+    <span style="font-size: 0.7rem; display: block">取件码</span>
+  </button>
+  <button
+    class="sidebar-btn"
+    id="configBtn"
+    title="连接设置"
+    style="
+      background: linear-gradient(135deg, #4361ee, #7209b7);
+      color: white;
+      border: none;
+      border-radius: 12px 0 0 12px;
+      padding: 15px 12px;
+      cursor: pointer;
+      box-shadow: -2px 0 10px rgba(0, 0, 0, 0.3);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      min-width: 65px;
+      font-size: 0.85rem;
+      font-weight: 600;
+    "
+  >
+    <i class="icon-settings" style="font-size: 1.4rem; display: block">⚙️</i>
+    <span style="font-size: 0.7rem; display: block">连接</span>
+  </button>
+  <button
+    class="sidebar-btn"
+    id="hashBtn"
+    title="密码哈希测试"
+    style="
+      background: linear-gradient(135deg, #4361ee, #7209b7);
+      color: white;
+      border: none;
+      border-radius: 12px 0 0 12px;
+      padding: 15px 12px;
+      cursor: pointer;
+      box-shadow: -2px 0 10px rgba(0, 0, 0, 0.3);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      min-width: 65px;
+      font-size: 0.85rem;
+      font-weight: 600;
+    "
+  >
+    <i class="icon-hash" style="font-size: 1.4rem; display: block">🔒</i>
+    <span style="font-size: 0.7rem; display: block">哈希测试</span>
+  </button>
 </div>
 
+<!-- 密码哈希测试弹窗 -->
+<div class="modal-overlay" id="hashModal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2><i class="icon-hash"></i> 密码哈希测试</h2>
+      <button class="modal-close" id="closeHashModal">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="hash-test-form">
+        <div class="input-group">
+          <label>输入密码：</label>
+          <input
+            type="password"
+            id="hashInput"
+            placeholder="请输入要测试的密码"
+          />
+        </div>
+        <div class="form-actions">
+          <button id="generateHashBtn" class="btn btn-primary">
+            生成哈希值
+          </button>
+          <button id="clearHashResultBtn" class="btn btn-secondary">
+            清空
+          </button>
+        </div>
+      </div>
+      <div class="hash-result" id="hashResult" style="display: none">
+        <h3>哈希结果：</h3>
+        <div class="result-content">
+          <p><strong>明文密码：</strong><span id="plainHashPassword"></span></p>
+          <p>
+            <strong>哈希密码：</strong><span id="hashedHashPassword"></span>
+          </p>
+          <p>
+            <strong>密码长度：</strong
+            ><span id="hashPasswordLength"></span> 字符
+          </p>
+          <p>
+            <strong>哈希长度：</strong><span id="hashResultLength"></span> 字符
+          </p>
+          <p>
+            <strong>执行时间：</strong><span id="hashExecutionTime"></span> ms
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

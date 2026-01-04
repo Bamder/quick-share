@@ -77,6 +77,7 @@ export function initModalEvents() {
   // 侧边栏按钮事件
   const codeSecBtn = document.getElementById("codeSecBtn");
   const configBtn = document.getElementById("configBtn");
+  const hashBtn = document.getElementById("hashBtn");
 
   if (codeSecBtn) {
     codeSecBtn.onclick = () => openModal("codeModal");
@@ -86,9 +87,14 @@ export function initModalEvents() {
     configBtn.onclick = () => openModal("configModal");
   }
 
+  if (hashBtn) {
+    hashBtn.onclick = () => openModal("hashModal");
+  }
+
   // 弹窗关闭按钮事件
   const closeCodeModal = document.getElementById("closeCodeModal");
   const closeConfigModal = document.getElementById("closeConfigModal");
+  const closeHashModal = document.getElementById("closeHashModal");
 
   if (closeCodeModal) {
     closeCodeModal.onclick = () => closeModal("codeModal");
@@ -98,9 +104,14 @@ export function initModalEvents() {
     closeConfigModal.onclick = () => closeModal("configModal");
   }
 
+  if (closeHashModal) {
+    closeHashModal.onclick = () => closeModal("hashModal");
+  }
+
   // 点击遮罩层关闭弹窗
   const codeModal = document.getElementById("codeModal");
   const configModal = document.getElementById("configModal");
+  const hashModal = document.getElementById("hashModal");
 
   if (codeModal) {
     codeModal.onclick = function (e) {
@@ -114,21 +125,29 @@ export function initModalEvents() {
     };
   }
 
+  if (hashModal) {
+    hashModal.onclick = function (e) {
+      if (e.target === this) closeModal("hashModal");
+    };
+  }
+
   // ESC 键关闭弹窗
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") {
       closeModal("codeModal");
       closeModal("configModal");
+      closeModal("hashModal");
     }
   });
 
   // 确保弹窗默认关闭
   closeModal("codeModal");
   closeModal("configModal");
+  closeModal("hashModal");
 }
 
 // ========== 加载弹窗HTML ==========
-export async function loadModalHTML() {
+export async function loadModalHTML(options = {}) {
   try {
     const response = await fetch("/static/components/modal/modal.html");
     if (!response.ok) {
@@ -140,9 +159,20 @@ export async function loadModalHTML() {
     const tempDiv = document.createElement("div");
     tempDiv.innerHTML = html;
 
-    // 将弹窗元素添加到body
-    while (tempDiv.firstChild) {
-      document.body.appendChild(tempDiv.firstChild);
+    // 检查当前页面是否是欢迎页
+    const isWelcomePage = window.location.pathname.includes("welcome.html");
+
+    // 获取所有子节点
+    const children = Array.from(tempDiv.children);
+
+    // 将弹窗元素添加到body，跳过侧边栏按钮（如果是欢迎页）
+    for (const child of children) {
+      // 如果是侧边栏按钮且是欢迎页，则跳过
+      if (isWelcomePage && child.classList.contains("sidebar-buttons")) {
+        console.log("欢迎页跳过侧边栏按钮");
+        continue;
+      }
+      document.body.appendChild(child);
     }
 
     // 初始化事件

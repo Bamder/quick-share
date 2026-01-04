@@ -85,6 +85,12 @@ document.addEventListener("DOMContentLoaded", async function () {
   initEventListeners();
   initUserStatusListener();
   initPasswordHashTest();
+
+  // 初始化侧边栏弹窗的哈希测试功能
+  setTimeout(() => {
+    initSidebarHashTest();
+  }, 200);
+
   autoTestPort();
   restorePreviousState();
 });
@@ -275,15 +281,15 @@ function handleLogout() {
 // ========== 密码哈希测试功能 ==========
 function initPasswordHashTest() {
   // 获取DOM元素
-  const passwordInput = document.getElementById("hashPasswordInput");
-  const hashBtn = document.getElementById("hashPasswordBtn");
-  const clearBtn = document.getElementById("clearHashBtn");
+  const passwordInput = document.getElementById("hashInput");
+  const hashBtn = document.getElementById("generateHashBtn");
+  const clearBtn = document.getElementById("clearHashResultBtn");
   const hashResult = document.getElementById("hashResult");
-  const plainPasswordEl = document.getElementById("plainPassword");
-  const hashedPasswordEl = document.getElementById("hashedPassword");
-  const passwordLengthEl = document.getElementById("passwordLength");
-  const hashLengthEl = document.getElementById("hashLength");
-  const hashTimeEl = document.getElementById("hashTime");
+  const plainPasswordEl = document.getElementById("plainHashPassword");
+  const hashedPasswordEl = document.getElementById("hashedHashPassword");
+  const passwordLengthEl = document.getElementById("hashPasswordLength");
+  const hashLengthEl = document.getElementById("hashResultLength");
+  const hashTimeEl = document.getElementById("hashExecutionTime");
 
   if (!passwordInput || !hashBtn || !clearBtn || !hashResult) {
     console.log("密码哈希测试元素未找到，跳过初始化");
@@ -366,6 +372,13 @@ function initPasswordHashTest() {
   });
 
   console.log("密码哈希测试功能已初始化");
+}
+
+// ========== 侧边栏哈希测试功能初始化 ==========
+function initSidebarHashTest() {
+  // 哈希测试功能已经在 modal.js 中通过 initModalEvents 初始化
+  // 这里主要是确保哈希测试的弹窗功能正常
+  console.log("侧边栏哈希测试功能已初始化");
 }
 
 // ========== 事件监听器初始化 ==========
