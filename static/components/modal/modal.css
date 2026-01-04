@@ -1,4 +1,5 @@
 /* ====== 弹窗样式 ====== */
+.modal,
 .modal-overlay {
   position: fixed !important;
   top: 0 !important;
@@ -18,6 +19,7 @@
   transition: opacity 0.3s ease, visibility 0.3s ease;
 }
 
+.modal.active,
 .modal-overlay.active {
   display: flex !important;
   visibility: visible !important;
@@ -65,7 +67,11 @@
   padding: 20px 25px !important;
   padding-right: 60px !important;
   border-bottom: 1px solid var(--border-color) !important;
-  background: linear-gradient(135deg, var(--primary), var(--secondary)) !important;
+  background: linear-gradient(
+    135deg,
+    var(--primary),
+    var(--secondary)
+  ) !important;
   color: white !important;
   border-radius: var(--border-radius) var(--border-radius) 0 0 !important;
   position: relative !important;
@@ -121,6 +127,74 @@
   padding: 25px;
 }
 
+/* ====== 表单样式 ====== */
+.form-group {
+  margin-bottom: 15px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  font-size: 0.95rem;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 1rem;
+  transition: all var(--transition-fast);
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+.form-group input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+.form-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.form-actions .btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.form-actions .btn-primary {
+  background-color: var(--color-primary);
+  color: white;
+}
+
+.form-actions .btn-primary:hover {
+  background-color: var(--color-primary-dark);
+  box-shadow: var(--shadow-md);
+}
+
+.form-actions .btn-secondary {
+  background-color: var(--color-surface);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.form-actions .btn-secondary:hover {
+  background-color: var(--color-surface-alt);
+  box-shadow: var(--shadow-md);
+}
+
 /* ====== 侧边栏按钮样式 ====== */
 .sidebar-buttons {
   position: fixed !important;
@@ -160,7 +234,7 @@
 }
 
 .sidebar-btn::before {
-  content: '';
+  content: "";
   position: absolute;
   left: 0;
   top: 0;
@@ -207,7 +281,7 @@
 }
 
 .code-value.expired::after {
-  content: '';
+  content: "";
   position: absolute;
   left: 0;
   top: 50%;
@@ -223,35 +297,34 @@
     width: 95%;
     max-height: 95vh;
   }
-  
+
   .modal-header {
     padding: 15px 20px;
   }
-  
+
   .modal-header h2 {
     font-size: 1.3rem;
   }
-  
+
   .modal-body {
     padding: 20px;
   }
-  
+
   .sidebar-buttons {
     right: 0;
     gap: 10px;
   }
-  
+
   .sidebar-btn {
     min-width: 55px;
     padding: 12px 8px;
   }
-  
+
   .sidebar-btn i {
     font-size: 1.2rem;
   }
-  
+
   .sidebar-btn span {
     font-size: 0.65rem;
   }
 }
-
