@@ -1,4 +1,4 @@
-﻿import os
+import os
 from pydantic_settings import BaseSettings
 from urllib.parse import quote_plus
 
@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     
     API_V1_PREFIX: str = "/api/v1"
     ALLOWED_ORIGINS: list = ["*"]
+    
+    # JWT配置
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "your-secret-key-here")
+    JWT_ALGORITHM: str = "HS256"
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
     class Config:
         env_file = ".env"

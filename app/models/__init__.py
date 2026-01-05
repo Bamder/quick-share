@@ -3,6 +3,7 @@ from .base import Base
 from .file import File
 from .pickup_code import PickupCode
 from .report import Report
+from .user import User
 
 # 暴露所有模型类，便于Alembic自动生成迁移脚本
-__all__ = ["Base", "File", "PickupCode", "Report"]
+__all__ = ["Base", "File", "PickupCode", "Report", "User"]
