@@ -17,6 +17,7 @@ class ReceiverService {
     this.apiBase = '';                    // API服务器基础URL
     this.encryptionKey = null;             // 文件加密密钥（原始密钥，用于解密文件块，不是密钥码）
     this.fileInfo = null;                 // 文件元信息
+    this.sessionId = null;                // 下载会话ID（从获取加密密钥接口返回）
     
     // 回调函数
     this.onProgress = null;               // 下载进度
@@ -210,6 +211,12 @@ class ReceiverService {
       throw new Error(result.msg || '获取加密密钥失败');
     }
 
+    // 保存会话ID（如果返回了）
+    if (result.data.sessionId) {
+      this.sessionId = result.data.sessionId;
+      console.log('[Receiver] 下载会话ID已保存:', this.sessionId);
+    }
+
     return result.data.encryptedKey;
   }
 
@@ -246,9 +253,13 @@ class ReceiverService {
    * @returns {Promise<void>}
    */
   async downloadChunk(chunkIndex) {
-    const response = await fetch(
-      `${this.apiBase}/relay/codes/${this.lookupCode}/download-chunk/${chunkIndex}`
-    );
+    // 如果有会话ID，在URL参数中传递
+    let url = `${this.apiBase}/relay/codes/${this.lookupCode}/download-chunk/${chunkIndex}`;
+    if (this.sessionId) {
+      url += `?session_id=${encodeURIComponent(this.sessionId)}`;
+    }
+    
+    const response = await fetch(url);
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
@@ -274,25 +285,46 @@ class ReceiverService {
 
   /**
    * 通知服务器下载完成
+   * 此接口会自动增加使用次数，并在达到上限时更新状态为completed
    * @returns {Promise<void>}
    */
   async notifyDownloadComplete() {
     try {
+      const requestBody = {};
+      if (this.sessionId) {
+        requestBody.session_id = this.sessionId;
+      }
+      
       const response = await fetch(
         `${this.apiBase}/relay/codes/${this.lookupCode}/download-complete`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
-          }
+          },
+          body: JSON.stringify(requestBody)
         }
       );
 
       if (!response.ok) {
-        throw new Error(`通知下载完成失败: HTTP ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+        // 如果是因为达到上限，记录日志但不抛出错误（文件已下载完成）
+        if (errorData.data && errorData.data.code === 'LIMIT_REACHED') {
+          console.log('[Receiver] ⚠️ 取件码已达到使用上限:', errorData.data);
+        } else {
+          throw new Error(errorData.msg || `通知下载完成失败: HTTP ${response.status}`);
+        }
+      } else {
+        const result = await response.json();
+        if (result.data) {
+          console.log('[Receiver] ✓ 下载完成，使用次数已更新:', {
+            usedCount: result.data.usedCount,
+            limitCount: result.data.limitCount,
+            remaining: result.data.remaining,
+            status: result.data.status
+          });
+        }
       }
-
-      console.log('[Receiver] ✓ 已通知服务器下载完成');
     } catch (error) {
       console.warn('[Receiver] 通知下载完成失败:', error);
       // 不抛出错误，因为文件已经下载完成
