@@ -3,10 +3,45 @@
  * 封装所有与后端交互的接口
  */
 
-// 服务器地址和端口
-const API_BASE = "http://你的服务器IP:你的端口"; // 例如: http://47.104.xxx.xxx:8000
+// 动态获取服务器地址和端口（从当前页面URL获取）
+function getApiBase() {
+  // 如果已经设置了全局 CONFIG，使用它
+  if (typeof window !== 'undefined' && window.CONFIG && window.CONFIG.API_BASE) {
+    return window.CONFIG.API_BASE;
+  }
+  
+  // 否则从当前页面URL动态获取
+  const protocol = window.location.protocol;
+  const hostname = window.location.hostname;
+  const port = window.location.port;
+  
+  // 构建 API 基础 URL
+  let apiBase = `${protocol}//${hostname}`;
+  if (port) {
+    apiBase += `:${port}`;
+  }
+  apiBase += '/api';
+  
+  return apiBase;
+}
 
-const API_VERSION = "/api/v1";
+const API_BASE = getApiBase();
+const API_VERSION = "/v1"; // 注意：API_BASE 已经包含了 /api，这里只需要 /v1
+
+/**
+ * 获取带 Authorization 头的请求头对象
+ * @param {Object} customHeaders 自定义请求头
+ * @returns {Object} 包含 Authorization 头的请求头对象
+ */
+export function getAuthHeaders(customHeaders = {}) {
+  const token = localStorage.getItem("quickshare_token");
+  const authHeader = token ? { Authorization: `Bearer ${token}` } : {};
+  
+  return {
+    ...authHeader,
+    ...customHeaders,
+  };
+}
 
 /**
  * 统一的API请求函数
@@ -23,14 +58,10 @@ export async function apiRequest(
 ) {
   const url = `${API_BASE}${API_VERSION}${endpoint}`;
 
-  // 自动添加Authorization头
-  const token = localStorage.getItem("quickshare_token");
-  const authHeader = token ? { Authorization: `Bearer ${token}` } : {};
-
+  // 使用辅助函数获取带 Authorization 头的请求头
   const headers = {
     Accept: "application/json",
-    ...authHeader,
-    ...customHeaders,
+    ...getAuthHeaders(customHeaders),
   };
 
   // 如果body不是FormData且不为null，则添加Content-Type头
@@ -53,9 +84,12 @@ export async function apiRequest(
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.message || `HTTP ${response.status}`);
+      // 后端返回格式: {code: 400, msg: "错误信息", data: {...}}
+      const errorMsg = data.msg || data.message || `HTTP ${response.status}`;
+      throw new Error(errorMsg);
     }
 
+    // 返回完整的响应数据（包含 code, msg, data）
     return data;
   } catch (error) {
     console.error(`API请求失败 [${method} ${endpoint}]:`, error);

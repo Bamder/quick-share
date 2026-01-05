@@ -9,6 +9,7 @@ import {
   decryptKeyWithPickupCode,
   extractLookupCode
 } from '../utils/encryption-utils.js';
+import { getAuthHeaders } from '../utils/api-client.js';
 
 class ReceiverService {
   constructor() {
@@ -198,7 +199,10 @@ class ReceiverService {
    */
   async getEncryptedKey() {
     const response = await fetch(
-      `${this.apiBase}/relay/codes/${this.lookupCode}/encrypted-key`
+      `${this.apiBase}/relay/codes/${this.lookupCode}/encrypted-key`,
+      {
+        headers: getAuthHeaders()
+      }
     );
 
     if (!response.ok) {
@@ -226,7 +230,10 @@ class ReceiverService {
    */
   async getFileInfo() {
     const response = await fetch(
-      `${this.apiBase}/relay/codes/${this.lookupCode}/file-info`
+      `${this.apiBase}/relay/codes/${this.lookupCode}/file-info`,
+      {
+        headers: getAuthHeaders()
+      }
     );
 
     if (!response.ok) {
@@ -259,7 +266,9 @@ class ReceiverService {
       url += `?session_id=${encodeURIComponent(this.sessionId)}`;
     }
     
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      headers: getAuthHeaders()
+    });
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
@@ -299,9 +308,9 @@ class ReceiverService {
         `${this.apiBase}/relay/codes/${this.lookupCode}/download-complete`,
         {
           method: 'POST',
-          headers: {
+          headers: getAuthHeaders({
             'Content-Type': 'application/json'
-          },
+          }),
           body: JSON.stringify(requestBody)
         }
       );

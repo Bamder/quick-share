@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, BigInteger, DateTime
+from sqlalchemy import Column, Integer, String, BigInteger, DateTime, ForeignKey
 from .base import Base
 
 
@@ -12,5 +12,6 @@ class File(Base):
     size = Column(BigInteger, nullable=False, comment='文件大小(字节)')
     hash = Column(String(64), comment='文件SHA256哈希')
     mime_type = Column(String(100), comment='文件MIME类型')
+    uploader_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, comment='分享者用户ID')
     created_at = Column(DateTime, comment='创建时间')
     updated_at = Column(DateTime, comment='更新时间')

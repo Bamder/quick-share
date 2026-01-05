@@ -3,7 +3,6 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from pydantic import BaseModel, EmailStr, Field
-import hashlib
 from jose import jwt
 
 from app.utils.response import (
@@ -23,7 +22,7 @@ router = APIRouter(tags=["认证管理"], prefix="/auth")
 class RegisterRequest(BaseModel):
     """注册请求模型"""
     username: str = Field(..., min_length=3, max_length=50, description="用户名")
-    password: str = Field(..., min_length=6, max_length=50, description="密码")
+    password: str = Field(..., min_length=6, max_length=64, description="密码（前端已哈希，SHA-256，64字符）")
 
 
 class LoginRequest(BaseModel):
@@ -79,8 +78,9 @@ async def register(
     if existing_user:
         return bad_request_response(msg="用户名已存在")
     
-    # 对密码进行哈希处理
-    password_hash = hashlib.sha256(request_data.password.encode()).hexdigest()
+    # 前端已经对密码进行了哈希处理，直接存储哈希值
+    # 注意：前端使用 SHA-256 哈希，长度为 64 字符
+    password_hash = request_data.password
     
     # 创建新用户
     user = User(
@@ -134,9 +134,8 @@ async def login(
     if not user:
         return bad_request_response(msg="用户名或密码错误")
     
-    # 验证密码
-    password_hash = hashlib.sha256(request_data.password.encode()).hexdigest()
-    if user.password_hash != password_hash:
+    # 验证密码（前端已经对密码进行了哈希处理，直接对比哈希值）
+    if user.password_hash != request_data.password:
         return bad_request_response(msg="用户名或密码错误")
     
     # 生成访问令牌

@@ -19,3 +19,6 @@ pydantic-settings==2.1.0
 
 # Redis 支持（可选，生产环境推荐）
 redis>=5.0.0
+
+# JWT 支持
+python-jose[cryptography]>=3.3.0
