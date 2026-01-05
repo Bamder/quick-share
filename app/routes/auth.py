@@ -56,7 +56,7 @@ class VerifyTokenResponse(BaseModel):
     user: UserResponse
 
 
-@router.post("/register", status_code=201, response_model=TokenResponse)
+@router.post("/register", status_code=201)
 async def register(
     request_data: RegisterRequest,
     request: Request,
@@ -111,7 +111,7 @@ async def register(
     )
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login")
 async def login(
     request_data: LoginRequest,
     request: Request,
