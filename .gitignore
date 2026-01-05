@@ -35,3 +35,9 @@ Thumbs.db
 
 # 日志文件
 *.log
+
+# SSL 证书（包含私钥，不应提交到版本控制）
+certs/
+*.crt
+*.key
+*.pem

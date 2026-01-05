@@ -163,15 +163,54 @@ if __name__ == "__main__":
     print("   • 换网络后IP会变")
     print("   • 按 Ctrl+C 停止服务器")
     print("=" * 50)
+    print()
+    
+    # 检查是否有SSL证书
+    from pathlib import Path
+    cert_dir = Path(project_root) / "certs"
+    cert_file = cert_dir / "server.crt"
+    key_file = cert_dir / "server.key"
+    
+    use_https = False
+    ssl_keyfile = None
+    ssl_certfile = None
+    
+    if cert_file.exists() and key_file.exists():
+        use_https = True
+        ssl_certfile = str(cert_file)
+        ssl_keyfile = str(key_file)
+        print("🔒 检测到SSL证书，将使用HTTPS模式")
+        print(f"   证书: {ssl_certfile}")
+        print(f"   私钥: {ssl_keyfile}")
+        print()
+        print("⚠️  注意: 这是自签名证书，浏览器会显示安全警告")
+        print("   点击'高级' -> '继续访问'（不安全网站）即可")
+        print()
+        print("📱 HTTPS 访问地址：")
+        print(f"   • https://127.0.0.1:8000")
+        print(f"   • https://localhost:8000")
+        print(f"   • https://{local_ip}:8000")
+        print()
+    else:
+        print("⚠️  未检测到SSL证书，使用HTTP模式")
+        print("   如果使用IP地址访问，加密功能可能无法使用")
+        print("   建议运行 scripts\\setup\\generate_ssl_cert\\generate_ssl_cert.bat 生成证书")
+        print()
     
     try:
-        uvicorn.run(
-            "app.main:app",
-            host="0.0.0.0",
-            port=8000,
-            reload=True,
-            log_level="info"
-        )
+        uvicorn_config = {
+            "app": "app.main:app",
+            "host": "0.0.0.0",
+            "port": 8000,
+            "reload": True,
+            "log_level": "info"
+        }
+        
+        if use_https:
+            uvicorn_config["ssl_keyfile"] = ssl_keyfile
+            uvicorn_config["ssl_certfile"] = ssl_certfile
+        
+        uvicorn.run(**uvicorn_config)
     except KeyboardInterrupt:
         print("\n" + "=" * 50)
         print("👋 服务器已停止")
