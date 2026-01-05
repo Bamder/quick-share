@@ -42,8 +42,23 @@ import {
 } from "/static/service/user-service.js";
 
 // 配置信息
+// 初始化 API_BASE：从当前页面 URL 动态获取
+function initializeApiBase() {
+  const protocol = window.location.protocol;
+  const hostname = window.location.hostname;
+  const port = window.location.port;
+  
+  let apiBase = `${protocol}//${hostname}`;
+  if (port) {
+    apiBase += `:${port}`;
+  }
+  apiBase += '/api';
+  
+  return apiBase;
+}
+
 const CONFIG = {
-  API_BASE: "",
+  API_BASE: initializeApiBase(), // 页面加载时自动初始化
   localFile: null,
   pickupCode: "",
   fileSize: 0,
@@ -667,12 +682,19 @@ async function generatePickupCodeHandler() {
 
     console.log("发送创建取件码请求:", requestData);
 
+    // 获取 token 并添加到请求头
+    const token = localStorage.getItem("quickshare_token");
+    const headers = {
+      "Content-Type": "application/json",
+    };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
     // 调用后端 API 创建文件和取件码
     const response = await fetch(`${CONFIG.API_BASE}/v1/codes`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: headers,
       body: JSON.stringify(requestData),
     });
 
@@ -1109,9 +1131,19 @@ async function receiveFile() {
     // 提取前6位查找码（只发送查找码到服务器，不暴露后6位密钥码）
     const lookupCode = code.substring(0, 6);
 
+    // 获取 token 并添加到请求头
+    const token = localStorage.getItem("quickshare_token");
+    const headers = {};
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
     // 先查询取件码状态，获取文件信息（只发送6位查找码）
     const statusResponse = await fetch(
-      `${CONFIG.API_BASE}/v1/codes/${lookupCode}/status`
+      `${CONFIG.API_BASE}/v1/codes/${lookupCode}/status`,
+      {
+        headers: headers
+      }
     );
     if (!statusResponse.ok) {
       const errorData = await statusResponse.json().catch(() => ({}));
@@ -1462,8 +1494,19 @@ async function updateStatusFromServer() {
   try {
     // 提取前6位查找码（只发送查找码到服务器，不暴露后6位密钥码）
     const lookupCode = CONFIG.pickupCode.substring(0, 6);
+    
+    // 获取 token 并添加到请求头
+    const token = localStorage.getItem("quickshare_token");
+    const headers = {};
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    
     const response = await fetch(
-      `${CONFIG.API_BASE}/v1/codes/${lookupCode}/status`
+      `${CONFIG.API_BASE}/v1/codes/${lookupCode}/status`,
+      {
+        headers: headers
+      }
     );
     if (!response.ok) {
       return; // 静默失败，不显示错误
@@ -1949,13 +1992,20 @@ async function invalidateFileRecord(fileId) {
     throw new Error("API基础URL未设置");
   }
 
+  // 获取 token 并添加到请求头
+  const token = localStorage.getItem("quickshare_token");
+  const headers = {
+    "Content-Type": "application/json",
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
   const response = await fetch(
     `${CONFIG.API_BASE}/v1/codes/files/${fileId}/invalidate`,
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: headers,
     }
   );
 

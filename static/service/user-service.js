@@ -59,16 +59,19 @@ export async function register(username, password) {
         console.log('【用户服务】注册 - 密码长度:', password.length, '字符');
         console.log('【用户服务】注册 - 哈希长度:', hashedPassword.length, '字符');
         
-        const response = await apiRequest('POST', '/api/auth/register', {
+        const response = await apiRequest('POST', '/auth/register', {
             username,
             password: hashedPassword
         });
         
-        if (response.token) {
+        // 后端返回格式: {code: 201, msg: "注册成功", data: {access_token: "...", token_type: "bearer", user: {...}}}
+        if (response.data && response.data.access_token) {
             // 保存token
-            localStorage.setItem('quickshare_token', response.token);
+            localStorage.setItem('quickshare_token', response.data.access_token);
             // 设置当前用户
-            setCurrentUser(response.user);
+            if (response.data.user) {
+                setCurrentUser(response.data.user);
+            }
         }
         
         return response;
@@ -96,16 +99,19 @@ export async function login(username, password) {
         console.log('【用户服务】登录 - 密码长度:', password.length, '字符');
         console.log('【用户服务】登录 - 哈希长度:', hashedPassword.length, '字符');
         
-        const response = await apiRequest('POST', '/api/auth/login', {
+        const response = await apiRequest('POST', '/auth/login', {
             username,
             password: hashedPassword
         });
         
-        if (response.token) {
+        // 后端返回格式: {code: 200, msg: "登录成功", data: {access_token: "...", token_type: "bearer", user: {...}}}
+        if (response.data && response.data.access_token) {
             // 保存token
-            localStorage.setItem('quickshare_token', response.token);
+            localStorage.setItem('quickshare_token', response.data.access_token);
             // 设置当前用户
-            setCurrentUser(response.user);
+            if (response.data.user) {
+                setCurrentUser(response.data.user);
+            }
         }
         
         return response;
@@ -132,10 +138,11 @@ export function logout() {
  */
 export async function verifyToken(token) {
     try {
-        const response = await apiRequest('GET', '/api/auth/verify', {}, {
+        const response = await apiRequest('GET', '/auth/verify', {}, {
             'Authorization': `Bearer ${token}`
         });
-        return response.user;
+        // 后端返回格式: {code: 200, msg: "success", data: {user: {...}}}
+        return response.data ? response.data.user : null;
     } catch (error) {
         console.error('token验证失败:', error);
         throw error;

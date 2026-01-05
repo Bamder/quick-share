@@ -15,20 +15,42 @@ scripts_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if scripts_dir not in sys.path:
     sys.path.insert(0, scripts_dir)
 
-# 从环境变量读取数据库配置（由 start_server.bat 传递）
-# 如果环境变量不存在，则使用默认值
-db_host = os.getenv("DB_HOST", "localhost")
-db_port = int(os.getenv("DB_PORT", "3306"))
-db_user = os.getenv("DB_USER", "root")
-db_password = os.getenv("DB_PASSWORD", "")
-db_name = os.getenv("DB_NAME", "quick_share_datagrip")
+# 从配置文件读取配置（支持 .env 文件）
+# 使用 app.config.Settings 自动加载 .env 文件中的配置
+try:
+    from app.config import settings
+except ImportError:
+    print("=" * 50)
+    print("❌ 错误：无法导入配置模块")
+    print("=" * 50)
+    print("请确认 app/config.py 文件存在")
+    sys.exit(1)
 
-# 设置环境变量，供 app.config.Settings 读取
+# 从配置对象读取数据库配置
+db_host = settings.DB_HOST
+db_port = settings.DB_PORT
+db_user = settings.DB_USER
+db_password = settings.DB_PASSWORD
+db_name = settings.DB_NAME
+
+# 从配置对象读取 Redis 配置
+redis_enabled = settings.REDIS_ENABLED
+redis_host = settings.REDIS_HOST
+redis_port = settings.REDIS_PORT
+redis_password = settings.REDIS_PASSWORD
+redis_db = settings.REDIS_DB
+
+# 设置环境变量，供其他模块读取（保持兼容性）
 os.environ["DB_HOST"] = str(db_host)
 os.environ["DB_PORT"] = str(db_port)
 os.environ["DB_USER"] = db_user
 os.environ["DB_PASSWORD"] = db_password
 os.environ["DB_NAME"] = db_name
+os.environ["REDIS_HOST"] = str(redis_host)
+os.environ["REDIS_PORT"] = str(redis_port)
+os.environ["REDIS_PASSWORD"] = redis_password
+os.environ["REDIS_DB"] = str(redis_db)
+os.environ["REDIS_ENABLED"] = "true" if redis_enabled else "false"
 
 try:
     import uvicorn
@@ -51,6 +73,13 @@ except ImportError:
     print("=" * 50)
     print("请确认 scripts/utils/database_check.py 文件存在")
     sys.exit(1)
+
+# 导入 Redis 诊断工具
+try:
+    from scripts.utils.redis_check import diagnose_redis_connection
+except ImportError:
+    # Redis 是可选的，如果导入失败也不影响启动
+    diagnose_redis_connection = None
 
 
 def get_local_ip():
@@ -136,6 +165,54 @@ if __name__ == "__main__":
     print("=" * 50)
     print()
     
+    # Redis 环境检查（总是检查，如果可用则自动启动）
+    if diagnose_redis_connection:
+        print("=" * 50)
+        print("    Redis 环境检查")
+        print("=" * 50)
+        print()
+        print("正在检查 Redis 连接...")
+        print()
+        
+        redis_diagnosis = diagnose_redis_connection(
+            host=redis_host,
+            port=redis_port,
+            password=redis_password,  # 传递字符串（空字符串或非空字符串），函数内部会处理
+            db=redis_db,
+            auto_start=True  # 自动启动 Redis（如果未运行）
+        )
+        
+        if redis_diagnosis["connection_success"]:
+            print("[✓] Redis 连接测试成功")
+            if redis_diagnosis.get("auto_started"):
+                print("[✓] Redis 服务已自动启动")
+            if redis_diagnosis.get("redis_version"):
+                print(f"   Redis 版本: {redis_diagnosis.get('redis_version')}")
+            if not redis_enabled:
+                print("   提示: 如需启用 Redis 功能，请设置环境变量 REDIS_ENABLED=true")
+            print()
+        else:
+            print(f"[✗] Redis 连接测试失败: {redis_diagnosis.get('error_message', '未知错误')}")
+            print()
+            if redis_enabled:
+                print("=" * 50)
+                print("⚠️  Redis 环境检查失败（但服务器将继续启动）")
+                print("=" * 50)
+                print()
+                if redis_diagnosis.get("recommendations"):
+                    print("建议操作：")
+                    for i, rec in enumerate(redis_diagnosis["recommendations"], 1):
+                        print(f"  {i}. {rec}")
+                print()
+            else:
+                print("   注意: Redis 未启用，服务器将在没有 Redis 的情况下运行")
+                print("   如需启用 Redis，请在 .env 文件中设置 REDIS_ENABLED=true")
+                print("   配置文件示例: .env.example")
+                print()
+        
+        print("=" * 50)
+        print()
+    
     # 环境检查通过，启动服务器
     local_ip = get_local_ip()
     
@@ -147,6 +224,13 @@ if __name__ == "__main__":
     print(f"   • 端口: {db_port}")
     print(f"   • 用户: {db_user}")
     print(f"   • 数据库: {db_name}")
+    if redis_enabled:
+        print("")
+        print("📦 Redis 配置：")
+        print(f"   • 主机: {redis_host}")
+        print(f"   • 端口: {redis_port}")
+        print(f"   • 数据库: {redis_db}")
+        print(f"   • 状态: 已启用")
     print("")
     print("📱 你自己访问：")
     print(f"   • http://127.0.0.1:8000 (最快)")

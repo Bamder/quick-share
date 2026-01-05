@@ -143,7 +143,11 @@ async def create_code(
         if existing_file and file_unchanged:
             # 文件已存在且未更改，复用文件记录
             file_record = existing_file
-            logger.info(f"复用已存在的文件记录: file_id={file_record.id}")
+            # 更新文件的分享者信息（如果当前用户不同）
+            if current_user and file_record.uploader_id != current_user.id:
+                file_record.uploader_id = current_user.id
+                db.flush()
+            logger.info(f"复用已存在的文件记录: file_id={file_record.id}, uploader_id={file_record.uploader_id}")
             # 查找该文件的第一个取件码（按创建时间排序），作为原始的 lookup_code
             original_pickup_code = db.query(PickupCode).filter(
                 PickupCode.file_id == existing_file.id
@@ -160,7 +164,8 @@ async def create_code(
                 stored_name=stored_name,
                 size=request_data.size,
                 hash=request_data.hash,
-                mime_type=request_data.mimeType
+                mime_type=request_data.mimeType,
+                uploader_id=current_user.id if current_user else None  # 记录分享者账号
             )
             db.add(file_record)
             db.flush()  # 获取 file_id，但不提交事务

@@ -15,6 +15,7 @@ import {
   extractLookupCode
 } from '../utils/encryption-utils.js';
 import { getKeyFromCache, storeKeyInCache } from '../utils/key-cache.js';
+import { getAuthHeaders } from '../utils/api-client.js';
 
 class SenderService {
   constructor() {
@@ -118,7 +119,9 @@ class SenderService {
       try {
         console.log('[Sender] 检查文件块是否已存在...');
         const checkUrl = `${this.apiBase}/relay/codes/${this.lookupCode}/check-chunks?total_chunks=${chunks.length}`;
-        const checkResponse = await fetch(checkUrl);
+        const checkResponse = await fetch(checkUrl, {
+          headers: getAuthHeaders()
+        });
         if (checkResponse.ok) {
           const checkResult = await checkResponse.json();
           if (checkResult.code === 200 && checkResult.data) {
@@ -180,6 +183,7 @@ class SenderService {
           uploadUrl,
           {
             method: 'POST',
+            headers: getAuthHeaders(), // 添加 Authorization 头
             body: formData
           }
         );
@@ -270,9 +274,9 @@ class SenderService {
         `${this.apiBase}/relay/codes/${this.lookupCode}/store-encrypted-key`,
         {
           method: 'POST',
-          headers: {
+          headers: getAuthHeaders({
             'Content-Type': 'application/json'
-          },
+          }),
           body: JSON.stringify({
             encryptedKey: encryptedKeyBase64
           })
@@ -310,9 +314,9 @@ class SenderService {
         `${this.apiBase}/relay/codes/${this.lookupCode}/upload-complete`,
         {
           method: 'POST',
-          headers: {
+          headers: getAuthHeaders({
             'Content-Type': 'application/json'
-          },
+          }),
           body: JSON.stringify({
             totalChunks: this.fileChunks.length,
             fileSize: this.currentFile.size,
