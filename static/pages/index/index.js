@@ -280,16 +280,24 @@ function handleLogout() {
 
 // ========== 密码哈希测试功能 ==========
 function initPasswordHashTest() {
-  // 获取DOM元素
-  const passwordInput = document.getElementById("hashInput");
-  const hashBtn = document.getElementById("generateHashBtn");
-  const clearBtn = document.getElementById("clearHashResultBtn");
-  const hashResult = document.getElementById("hashResult");
-  const plainPasswordEl = document.getElementById("plainHashPassword");
-  const hashedPasswordEl = document.getElementById("hashedHashPassword");
-  const passwordLengthEl = document.getElementById("hashPasswordLength");
-  const hashLengthEl = document.getElementById("hashResultLength");
-  const hashTimeEl = document.getElementById("hashExecutionTime");
+  // 只初始化弹窗中的哈希测试功能，不初始化直接展示的块
+  // 检查元素是否在弹窗中（hashModal）
+  const hashModal = document.getElementById("hashModal");
+  if (!hashModal) {
+    console.log("密码哈希测试弹窗未找到，跳过初始化");
+    return;
+  }
+
+  // 获取弹窗中的DOM元素（只在hashModal内部查找）
+  const passwordInput = hashModal.querySelector("#hashInput");
+  const hashBtn = hashModal.querySelector("#generateHashBtn");
+  const clearBtn = hashModal.querySelector("#clearHashResultBtn");
+  const hashResult = hashModal.querySelector("#hashResult");
+  const plainPasswordEl = hashModal.querySelector("#plainHashPassword");
+  const hashedPasswordEl = hashModal.querySelector("#hashedHashPassword");
+  const passwordLengthEl = hashModal.querySelector("#hashPasswordLength");
+  const hashLengthEl = hashModal.querySelector("#hashResultLength");
+  const hashTimeEl = hashModal.querySelector("#hashExecutionTime");
 
   if (!passwordInput || !hashBtn || !clearBtn || !hashResult) {
     console.log("密码哈希测试元素未找到，跳过初始化");
