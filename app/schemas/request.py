@@ -24,4 +24,4 @@ class CreateCodeRequest(BaseModel):
     mimeType: Optional[str] = Field(None, max_length=100, description="文件MIME类型")
     hash: Optional[str] = Field(None, max_length=64, description="文件SHA256哈希值")
     limitCount: Optional[int] = Field(3, ge=1, le=999, description="最大使用次数（999=无限）")
-    expireHours: Optional[int] = Field(24, ge=1, le=168, description="过期时间（小时，默认24小时，最大7天）")
+    expireHours: Optional[float] = Field(24.0, ge=0.1, le=168.0, description="过期时间（小时，支持小数，如0.5表示30分钟，默认24小时，最大7天）")

@@ -30,6 +30,9 @@ async def create_code(
     """
     创建文件元数据对象和取件码
     
+    重要：此接口只能通过用户明确点击"生成取件码"按钮时调用。
+    不允许在其他情况下（如文件上传完成后）自动调用此接口。
+    
     参数：
     - request_data: 文件元数据信息
     - request: FastAPI 请求对象（用于获取客户端IP）
@@ -40,9 +43,16 @@ async def create_code(
     # 验证请求数据（Pydantic 会自动验证，这里只是记录日志）
     import logging
     logger = logging.getLogger(__name__)
-    logger.info(f"创建取件码请求: originalName={request_data.originalName}, size={request_data.size}, "
+    
+    # 记录取件码创建请求的来源信息（用于审计）
+    client_ip = request.client.host if request.client else None
+    if "x-forwarded-for" in request.headers:
+        client_ip = request.headers["x-forwarded-for"].split(",")[0].strip()
+    user_agent = request.headers.get("user-agent", "unknown")
+    
+    logger.info(f"[取件码创建] 用户操作触发: originalName={request_data.originalName}, size={request_data.size}, "
                 f"mimeType={request_data.mimeType}, limitCount={request_data.limitCount}, "
-                f"expireHours={request_data.expireHours}")
+                f"expireHours={request_data.expireHours}, client_ip={client_ip}, user_agent={user_agent[:50]}")
     
     try:
         # 1. 检查文件是否已存在（去重逻辑）

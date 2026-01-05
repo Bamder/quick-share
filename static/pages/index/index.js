@@ -280,16 +280,24 @@ function handleLogout() {
 
 // ========== 密码哈希测试功能 ==========
 function initPasswordHashTest() {
-  // 获取DOM元素
-  const passwordInput = document.getElementById("hashInput");
-  const hashBtn = document.getElementById("generateHashBtn");
-  const clearBtn = document.getElementById("clearHashResultBtn");
-  const hashResult = document.getElementById("hashResult");
-  const plainPasswordEl = document.getElementById("plainHashPassword");
-  const hashedPasswordEl = document.getElementById("hashedHashPassword");
-  const passwordLengthEl = document.getElementById("hashPasswordLength");
-  const hashLengthEl = document.getElementById("hashResultLength");
-  const hashTimeEl = document.getElementById("hashExecutionTime");
+  // 只初始化弹窗中的哈希测试功能，不初始化直接展示的块
+  // 检查元素是否在弹窗中（hashModal）
+  const hashModal = document.getElementById("hashModal");
+  if (!hashModal) {
+    console.log("密码哈希测试弹窗未找到，跳过初始化");
+    return;
+  }
+
+  // 获取弹窗中的DOM元素（只在hashModal内部查找）
+  const passwordInput = hashModal.querySelector("#hashInput");
+  const hashBtn = hashModal.querySelector("#generateHashBtn");
+  const clearBtn = hashModal.querySelector("#clearHashResultBtn");
+  const hashResult = hashModal.querySelector("#hashResult");
+  const plainPasswordEl = hashModal.querySelector("#plainHashPassword");
+  const hashedPasswordEl = hashModal.querySelector("#hashedHashPassword");
+  const passwordLengthEl = hashModal.querySelector("#hashPasswordLength");
+  const hashLengthEl = hashModal.querySelector("#hashResultLength");
+  const hashTimeEl = hashModal.querySelector("#hashExecutionTime");
 
   if (!passwordInput || !hashBtn || !clearBtn || !hashResult) {
     console.log("密码哈希测试元素未找到，跳过初始化");
@@ -524,6 +532,18 @@ function handleFile(file) {
 }
 
 // ========== 生成取件码处理器 ==========
+/**
+ * 生成取件码处理函数
+ * 
+ * 重要：此函数只能通过用户明确点击"生成取件码"按钮时调用。
+ * 不允许在其他情况下（如文件上传完成后）自动调用此函数。
+ * 
+ * 工作流程：
+ * 1. 用户选择文件
+ * 2. 用户点击"生成取件码"按钮 -> 调用此函数
+ * 3. 创建取件码（后端API）
+ * 4. 上传文件（使用已创建的取件码）
+ */
 async function generatePickupCodeHandler() {
   if (!CONFIG.localFile) {
     showMessage("请先选择文件", "error");
@@ -570,17 +590,15 @@ async function generatePickupCodeHandler() {
     const expireSelect = document.getElementById("expireSelect");
     const limitSelect = document.getElementById("limitSelect");
 
-    // 处理过期时间：前端是分钟，后端需要小时
+    // 处理过期时间：前端是分钟，后端需要小时（支持小数）
     const expireMinutes = expireSelect
       ? parseInt(expireSelect.value) || 1440
       : 1440; // 默认1440分钟 = 24小时
-    // 转换为小时，至少1小时（如果小于60分钟，也设为1小时）
-    // 先计算小时数，然后向上取整，最后转换为整数
-    const expireHoursRaw = expireMinutes / 60;
-    const expireHours = Math.max(1, Math.ceil(expireHoursRaw)); // 向上取整，至少1小时
-    const expireHoursInt = Number.isInteger(expireHours)
-      ? expireHours
-      : Math.floor(expireHours); // 确保是整数
+    // 转换为小时（保留小数，精确转换）
+    // 例如：30分钟 = 0.5小时，5分钟 = 0.083小时
+    const expireHours = expireMinutes / 60;
+    // 确保至少0.1小时（6分钟），最大168小时（7天）
+    const expireHoursFinal = Math.max(0.1, Math.min(168.0, expireHours));
 
     // 确保 limitCount 在有效范围内
     const limitCountRaw = limitSelect ? parseInt(limitSelect.value) || 3 : 3;
@@ -588,11 +606,8 @@ async function generatePickupCodeHandler() {
 
     console.log("配置选项:", {
       expireMinutes,
-      expireHoursRaw,
-      expireHours,
-      expireHoursInt,
+      expireHours: expireHoursFinal,
       limitCount,
-      验证expireHoursInt类型: typeof expireHoursInt,
     });
 
     // 计算文件哈希（可选，这里先不实现）
@@ -607,7 +622,7 @@ async function generatePickupCodeHandler() {
       limitCount: Number.isInteger(limitCount)
         ? limitCount
         : Math.floor(limitCount), // 确保是整数
-      expireHours: expireHoursInt, // 使用计算好的整数
+      expireHours: expireHoursFinal, // 使用计算好的小时数（支持小数）
     };
 
     // 验证数据类型
@@ -625,7 +640,7 @@ async function generatePickupCodeHandler() {
       expireHours: {
         value: requestData.expireHours,
         type: typeof requestData.expireHours,
-        isInteger: Number.isInteger(requestData.expireHours),
+        isNumber: typeof requestData.expireHours === "number",
       },
     });
 
@@ -1186,6 +1201,10 @@ async function initializeSenderService() {
       },
       onComplete: () => {
         console.log("文件上传完成");
+        
+        // 重要：文件上传完成后，不会自动生成取件码
+        // 取件码必须在用户明确点击"生成取件码"按钮时创建
+        // 上传完成只是通知用户文件已准备好，可以生成取件码进行分享
 
         // 更新进度条到100%
         if (sendProgressFill) {
@@ -1215,7 +1234,7 @@ async function initializeSenderService() {
           uploadCompleteBadge.classList.add("show");
         }
 
-        showMessage("文件已成功上传，等待接收方下载", "success");
+        showMessage("文件已成功上传，可以生成取件码进行分享", "success");
       },
       onError: (error) => {
         console.error("上传错误:", error);
