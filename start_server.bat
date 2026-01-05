@@ -129,53 +129,33 @@ del error.tmp 2>nul
 echo [成功] 环境检查通过
 echo.
 
-:: 获取数据库配置信息
+:: 使用 Python 脚本进行交互式配置
 echo ========================================
-echo    数据库配置
+echo    配置数据库和 Redis
 echo ========================================
 echo.
-echo 请输入数据库配置信息：
+echo 正在启动配置向导...
 echo.
 
-set /p DB_USER="数据库用户名 (默认: root): "
-if "!DB_USER!"=="" set "DB_USER=root"
-
-set /p DB_PASSWORD="数据库密码: "
-if "!DB_PASSWORD!"=="" (
-    echo [错误] 密码不能为空
+cd /d "%PROJECT_ROOT%"
+:: 直接运行 Python 脚本，不重定向输出（交互式脚本需要直接显示）
+"!PYTHON_EXE!" "scripts\utils\config_helper.py"
+if errorlevel 1 (
+    echo.
+    echo [错误] 配置失败
     pause
     exit /b 1
 )
 
-set /p DB_HOST="数据库主机 (默认: localhost): "
-if "!DB_HOST!"=="" set "DB_HOST=localhost"
+:: 注意：Python 脚本已将配置写入 .env 文件，start_server.py 会自动读取
 
-set /p DB_PORT="数据库端口 (默认: 3306): "
-if "!DB_PORT!"=="" set "DB_PORT=3306"
-
-set /p DB_NAME="数据库名称 (默认: quick_share_datagrip): "
-if "!DB_NAME!"=="" set "DB_NAME=quick_share_datagrip"
-
-echo.
-echo [信息] 数据库配置：
-echo   主机: !DB_HOST!
-echo   端口: !DB_PORT!
-echo   用户: !DB_USER!
-echo   数据库: !DB_NAME!
 echo.
 echo ========================================
 echo    正在启动服务器...
 echo ========================================
 echo.
 
-:: 切换到脚本目录并运行，传递数据库配置作为环境变量
-cd /d "%PROJECT_ROOT%"
-:: 将变量值设置到环境变量中（确保传递给子进程）
-set "DB_HOST=!DB_HOST!"
-set "DB_PORT=!DB_PORT!"
-set "DB_USER=!DB_USER!"
-set "DB_PASSWORD=!DB_PASSWORD!"
-set "DB_NAME=!DB_NAME!"
+:: 启动服务器（配置已通过 .env 文件或环境变量传递）
 "!PYTHON_EXE!" "scripts\run\start_server.py"
 
 :: 如果脚本退出，暂停以便查看错误信息
