@@ -348,8 +348,13 @@ export function clearStorage() {
  */
 export async function testPortConnection(host, port) {
     try {
+        // 检测当前页面的协议（HTTPS或HTTP），使用相同的协议避免混合内容错误
+        const protocol = typeof window !== 'undefined' && window.location 
+            ? window.location.protocol 
+            : 'http:';
+        
         // 使用健康检查端点
-        const url = `http://${host}:${port}/health`;
+        const url = `${protocol}//${host}:${port}/health`;
         const response = await fetch(url, {
             method: 'GET',
             mode: 'cors',

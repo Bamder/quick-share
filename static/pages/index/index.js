@@ -1718,7 +1718,10 @@ async function testPortConnectionHandler() {
     const isConnected = await testPortConnection(host, port);
 
     if (isConnected) {
-      CONFIG.API_BASE = `http://${host}:${port}/api`;
+      // 使用当前页面的协议（HTTPS或HTTP），避免混合内容错误
+      // 兼容性：如果页面是HTTPS，使用HTTPS；如果是HTTP，使用HTTP
+      const protocol = window.location.protocol;
+      CONFIG.API_BASE = `${protocol}//${host}:${port}/api`;
       resultElement.innerHTML = '<i class="icon-success"></i> 连接成功！';
       resultElement.style.color = "#4cc9f0";
       showMessage("端口连接成功，可以正常使用", "success");

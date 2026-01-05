@@ -115,7 +115,60 @@
  * 
  * @returns {Promise<CryptoKey>} 文件加密密钥（第1个概念，AES-GCM，256位，随机生成）
  */
+/**
+ * 检查是否在安全上下文中（HTTPS或localhost）
+ * @returns {boolean} 是否在安全上下文中
+ */
+function isSecureContext() {
+    // 检查是否为安全上下文
+    if (typeof window !== 'undefined' && window.isSecureContext !== undefined) {
+        return window.isSecureContext;
+    }
+    
+    // 降级检查：检查协议和主机名
+    if (typeof location !== 'undefined') {
+        const protocol = location.protocol;
+        const hostname = location.hostname;
+        
+        // HTTPS 协议
+        if (protocol === 'https:') {
+            return true;
+        }
+        
+        // localhost 或 127.0.0.1（开发环境）
+        if (protocol === 'http:' && (hostname === 'localhost' || hostname === '127.0.0.1')) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
 export async function generateEncryptionKey() {
+    // 检查安全上下文
+    if (!isSecureContext()) {
+        const protocol = typeof location !== 'undefined' ? location.protocol : 'unknown';
+        const hostname = typeof location !== 'undefined' ? location.hostname : 'unknown';
+        const errorMsg = `无法生成加密密钥：Web Crypto API 需要安全上下文（HTTPS或localhost）
+
+当前访问方式: ${protocol}//${hostname}
+
+解决方案：
+1. 使用 HTTPS 访问（推荐）
+   - 服务器已支持 HTTPS，请使用 https:// 开头访问
+   - 如果是自签名证书，浏览器会显示警告，点击"高级" -> "继续访问"即可
+
+2. 如果使用 IP 地址，需要配置 HTTPS
+   - 运行脚本生成SSL证书: scripts\\setup\\generate_ssl_cert\\generate_ssl_cert.bat
+   - 然后使用 https://[您的IP]:8000 访问
+
+3. 开发环境可以使用 localhost
+   - 使用 http://localhost:8000 访问（仅限本机）`;
+        
+        console.error('[Encryption]', errorMsg);
+        throw new Error(errorMsg);
+    }
+    
     try {
         const key = await crypto.subtle.generateKey(
             {
@@ -128,7 +181,13 @@ export async function generateEncryptionKey() {
         return key;
     } catch (error) {
         console.error('[Encryption] 生成加密密钥失败:', error);
-        throw new Error('无法生成加密密钥，请确保使用HTTPS连接');
+        
+        // 如果是因为安全上下文问题，提供更详细的错误信息
+        if (!isSecureContext()) {
+            throw new Error('无法生成加密密钥，请确保使用HTTPS连接或localhost');
+        }
+        
+        throw new Error(`无法生成加密密钥: ${error.message}`);
     }
 }
 
