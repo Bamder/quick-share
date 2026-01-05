@@ -15,6 +15,8 @@ from app.schemas.request import CreateCodeRequest
 from app.schemas.response import PickupCodeStatusResponse, FileInfoResponse, UsageUpdateResponse, CreateCodeResponse
 # 导入映射表（用于支持一个文件对应多个取件码）
 from app.routes.relay import lookup_code_mapping
+# 导入认证相关功能
+from app.routes.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +27,8 @@ router = APIRouter(tags=["取件码管理"], prefix="/codes")
 async def create_code(
     request_data: CreateCodeRequest,
     request: Request,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
     """
     创建文件元数据对象和取件码
@@ -55,6 +58,13 @@ async def create_code(
                 f"expireHours={request_data.expireHours}, client_ip={client_ip}, user_agent={user_agent[:50]}")
     
     try:
+        # 检查权限：只有登录用户才能创建取件码
+        if not current_user:
+            return bad_request_response(
+                msg="只有登录用户才能生成取件码",
+                data={"code": "UNAUTHORIZED", "status": "unauthorized"}
+            )
+        
         # 1. 检查文件是否已存在（去重逻辑）
         # 优先使用哈希，如果没有哈希则使用文件名+大小
         existing_file = None

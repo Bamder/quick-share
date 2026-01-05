@@ -65,15 +65,32 @@ if exist "!VENV_PATH!\Scripts\python.exe" (
 :: 检查关键依赖
 echo [信息] 正在检查依赖...
 
-:: 使用虚拟环境中的 Python 检查 uvicorn
+:: 检查多个关键依赖模块
+set "MISSING_DEPS=0"
 "!PYTHON_EXE!" -c "import uvicorn" 2>nul
 if errorlevel 1 (
     echo [警告] 未找到 uvicorn 模块
+    set "MISSING_DEPS=1"
+)
+"!PYTHON_EXE!" -c "import fastapi" 2>nul
+if errorlevel 1 (
+    echo [警告] 未找到 fastapi 模块
+    set "MISSING_DEPS=1"
+)
+"!PYTHON_EXE!" -c "from jose import jwt" 2>nul
+if errorlevel 1 (
+    echo [警告] 未找到 python-jose 模块
+    set "MISSING_DEPS=1"
+)
+
+if !MISSING_DEPS! equ 1 (
     echo.
+    echo 检测到缺少依赖模块
     echo 请先安装依赖：
     echo   pip install -r requirements.txt
     echo.
-    set /p INSTALL_DEPS="是否现在安装依赖？(Y/N，默认: N): "
+    set /p INSTALL_DEPS="是否现在自动安装依赖？(Y/N，默认: Y): "
+    if /i "!INSTALL_DEPS!"=="" set "INSTALL_DEPS=Y"
     if /i "!INSTALL_DEPS!"=="Y" (
         echo.
         echo 正在安装依赖...
@@ -106,25 +123,51 @@ if errorlevel 1 (
     type error.tmp 2>nul
     del error.tmp 2>nul
     echo.
-    echo 请检查：
-    echo  1. 当前目录是否为项目根目录
-    echo  2. app 目录是否存在
-    echo  3. 依赖是否已正确安装（特别是 fastapi, pydantic-settings）
-    echo  4. 虚拟环境是否已正确激活
+    echo 检测到缺少依赖，尝试自动安装...
     echo.
-    echo 建议操作：
-    echo  1. 确保虚拟环境已激活
     if exist "!VENV_PATH!\Scripts\pip.exe" (
-        echo  2. 运行: !VENV_PATH!\Scripts\pip.exe install -r requirements.txt
+        "!VENV_PATH!\Scripts\pip.exe" install -r requirements.txt
     ) else (
-        echo  2. 运行: pip install -r requirements.txt
+        pip install -r requirements.txt
     )
-    echo  3. 重新运行此脚本
-    echo.
-    pause
-    exit /b 1
+    if errorlevel 1 (
+        echo [错误] 自动安装依赖失败
+        echo.
+        echo 请检查：
+        echo  1. 当前目录是否为项目根目录
+        echo  2. app 目录是否存在
+        echo  3. 依赖是否已正确安装（特别是 fastapi, pydantic-settings, python-jose）
+        echo  4. 虚拟环境是否已正确激活
+        echo.
+        echo 建议操作：
+        echo  1. 确保虚拟环境已激活
+        if exist "!VENV_PATH!\Scripts\pip.exe" (
+            echo  2. 运行: !VENV_PATH!\Scripts\pip.exe install -r requirements.txt
+        ) else (
+            echo  2. 运行: pip install -r requirements.txt
+        )
+        echo  3. 重新运行此脚本
+        echo.
+        pause
+        exit /b 1
+    )
+    echo [成功] 依赖已自动安装，重新检查 app 模块...
+    "!PYTHON_EXE!" -c "import app.main" 2>error.tmp
+    if errorlevel 1 (
+        echo [错误] 安装依赖后仍无法导入 app 模块
+        echo.
+        echo 详细错误信息：
+        type error.tmp 2>nul
+        del error.tmp 2>nul
+        echo.
+        pause
+        exit /b 1
+    )
+    del error.tmp 2>nul
+    echo [成功] app 模块检查通过
+) else (
+    del error.tmp 2>nul
 )
-del error.tmp 2>nul
 
 echo [成功] 环境检查通过
 echo.

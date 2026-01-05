@@ -23,6 +23,9 @@ from app.extensions import get_db
 from app.models.pickup_code import PickupCode
 import logging
 
+# 导入认证相关功能
+from app.routes.auth import get_current_user
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["服务器中转"], prefix="/relay")
@@ -313,7 +316,8 @@ async def upload_chunk(
     chunk_data: UploadFile = File(...),
     chunk_index: Optional[int] = Form(None),
     chunk_index_query: Optional[int] = Query(None, alias="chunk_index"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
     """
     上传加密的文件块（流式传输）
@@ -337,6 +341,13 @@ async def upload_chunk(
     - 数据存储在内存中，不写入磁盘
     - 支持一对多：多个接收者可以同时下载
     """
+    # 检查权限：只有登录用户才能上传文件块
+    if not current_user:
+        return bad_request_response(
+            msg="只有登录用户才能上传文件块",
+            data={"code": "UNAUTHORIZED", "status": "unauthorized"}
+        )
+    
     # 验证取件码（服务器只接收6位查找码）
     if not validate_pickup_code(code):
         return bad_request_response(msg="取件码格式错误，必须为6位大写字母或数字")
@@ -456,7 +467,8 @@ async def upload_chunk(
 async def upload_complete(
     code: str,
     request: UploadCompleteRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
     """
     通知服务器上传完成
@@ -466,6 +478,13 @@ async def upload_complete(
     重要：此接口只用于通知上传完成，不会自动创建取件码。
     取件码必须在用户明确点击"生成取件码"按钮时，通过 /api/v1/codes POST 接口创建。
     """
+    # 检查权限：只有登录用户才能调用此接口
+    if not current_user:
+        return bad_request_response(
+            msg="只有登录用户才能调用此接口",
+            data={"code": "UNAUTHORIZED", "status": "unauthorized"}
+        )
+    
     # 验证取件码（服务器只接收6位查找码）
     if not validate_pickup_code(code):
         return bad_request_response(msg="取件码格式错误，必须为6位大写字母或数字")
@@ -514,7 +533,8 @@ async def upload_complete(
 async def store_encrypted_key(
     code: str,
     encryptedKey: str = Body(..., embed=True),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
     """
     存储加密后的文件加密密钥
@@ -538,6 +558,13 @@ async def store_encrypted_key(
     - 只有拥有完整取件码（包括后6位密钥码）的用户才能解密
     - 保持端到端加密的安全性
     """
+    # 检查权限：只有登录用户才能调用此接口
+    if not current_user:
+        return bad_request_response(
+            msg="只有登录用户才能调用此接口",
+            data={"code": "UNAUTHORIZED", "status": "unauthorized"}
+        )
+    
     # 验证取件码（服务器只接收6位查找码）
     if not validate_pickup_code(code):
         return bad_request_response(msg="取件码格式错误，必须为6位大写字母或数字")
@@ -703,7 +730,8 @@ async def get_encrypted_key(
 async def check_chunks(
     code: str,
     total_chunks: int = Query(..., description="总块数"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
     """
     检查文件块是否已存在（用于复用旧文件块，避免重复上传）
@@ -711,6 +739,13 @@ async def check_chunks(
     发送者使用此接口在上传前检查文件块是否已存在
     如果已存在，可以跳过上传，直接复用
     """
+    # 检查权限：只有登录用户才能调用此接口
+    if not current_user:
+        return bad_request_response(
+            msg="只有登录用户才能调用此接口",
+            data={"code": "UNAUTHORIZED", "status": "unauthorized"}
+        )
+    
     # 验证取件码（服务器只接收6位查找码）
     if not validate_pickup_code(code):
         return bad_request_response(msg="取件码格式错误，必须为6位大写字母或数字")

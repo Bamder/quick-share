@@ -1,4 +1,4 @@
-﻿# 本地配置文件（重要！）
+# 本地配置文件（重要！）
 # alembic.ini 包含数据库连接信息，不应提交到版本控制
 alembic.ini
 
@@ -14,6 +14,7 @@ env/
 ENV/
 virtualenv/
 .env/
+.env
 venv.bak/
 env.bak/
 

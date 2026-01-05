@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     REDIS_PASSWORD: str = os.getenv("REDIS_PASSWORD", "")
     REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
     REDIS_ENABLED: bool = os.getenv("REDIS_ENABLED", "false").lower() == "true"
+
+    # JWT配置
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "your-secret-key-here")
+    JWT_ALGORITHM: str = "HS256"
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
     class Config:
         env_file = ".env"

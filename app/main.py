@@ -1,4 +1,4 @@
-﻿from fastapi import FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -10,6 +10,7 @@ import app.routes.health as health_router
 import app.routes.codes as codes_router
 import app.routes.relay as relay_router
 import app.routes.reports as reports_router
+import app.routes.auth as auth_router
 import logging
 import os
 import socket
@@ -156,6 +157,7 @@ app.include_router(health_router.router)
 app.include_router(codes_router.router, prefix=settings.API_V1_PREFIX)
 app.include_router(relay_router.router, prefix=settings.API_V1_PREFIX)
 app.include_router(reports_router.router, prefix=settings.API_V1_PREFIX)
+app.include_router(auth_router.router, prefix=settings.API_V1_PREFIX)
 
 @app.get("/")
 async def root():
