@@ -40,7 +40,7 @@ scripts\run\start_server.py
 
 ## ✅ 验证成功
 
-浏览器访问：http://localhost:8000 或 https://localhost:8000
+浏览器访问：https://localhost:8000
 看到"Quick Share"页面即成功！
 
 ## 🔒 SSL证书说明
