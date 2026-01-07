@@ -116,6 +116,7 @@ async def create_code(
             # 如果没有未过期的取件码，检查是否有可复用的文件块缓存
             # 获取原始上传者的 user_id（文件块缓存是用这个 user_id 存储的）
             original_uploader_id = existing_file.uploader_id if existing_file else None
+            now = DatetimeUtil.now()  # 定义 now 变量用于时间比较
             
             # 查找该文件的所有取件码，检查哪个取件码对应的缓存存在
             # 优化：只查询 code 字段，提高性能
