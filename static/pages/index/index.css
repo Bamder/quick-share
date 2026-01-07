@@ -420,6 +420,37 @@ body {
   border-radius: 5px;
 }
 
+/* 验证完整性状态 */
+.progress-container.validating {
+  background: linear-gradient(135deg, #cfe2ff 0%, #b8d4ff 100%);
+  border: 2px solid #0d6efd;
+}
+
+.progress-container.validating .progress-header {
+  color: #084298;
+}
+
+.progress-container.validating .progress-header::after {
+  content: " ⏳";
+  color: #0d6efd;
+  font-weight: bold;
+  font-size: 1.2em;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.progress-fill.validating {
+  background: linear-gradient(90deg, #0d6efd, #0dcaf0);
+}
+
 /* 上传完成状态 */
 .progress-container.completed {
   background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);

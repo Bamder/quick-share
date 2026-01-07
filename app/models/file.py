@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, BigInteger, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, BigInteger, DateTime, ForeignKey, Boolean
 from .base import Base
 
 
@@ -13,5 +13,6 @@ class File(Base):
     hash = Column(String(64), comment='文件SHA256哈希')
     mime_type = Column(String(100), comment='文件MIME类型')
     uploader_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, comment='分享者用户ID')
+    is_invalidated = Column(Boolean, default=False, comment='是否已被废弃')
     created_at = Column(DateTime, comment='创建时间')
     updated_at = Column(DateTime, comment='更新时间')

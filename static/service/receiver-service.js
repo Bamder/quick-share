@@ -99,25 +99,49 @@ class ReceiverService {
         this.onProgress(0, 0, fileInfo.totalChunks, null); // 传递null表示连接完成，开始下载
       }
 
-      // 4. 下载所有加密块
-      console.log('[Receiver] 开始下载加密文件块...');
-      const downloadPromises = [];
-      for (let i = 0; i < fileInfo.totalChunks; i++) {
-        downloadPromises.push(this.downloadChunk(i));
+      // 4. 批量下载所有加密块（优化性能）
+      console.log('[Receiver] 开始批量下载加密文件块...');
+      const batchSize = 25; // 每批下载25个块（根据64KB块大小优化）
+      const allChunkIndices = Array.from({ length: fileInfo.totalChunks }, (_, i) => i);
+      
+      // 分批下载
+      for (let i = 0; i < allChunkIndices.length; i += batchSize) {
+        const batchIndices = allChunkIndices.slice(i, i + batchSize);
+        await this.downloadChunksBatch(batchIndices);
+        
+        // 更新进度
+        const downloadedCount = Math.min(i + batchSize, fileInfo.totalChunks);
+        const progress = (downloadedCount / fileInfo.totalChunks) * 100;
+        if (this.onProgress) {
+          this.onProgress(progress, downloadedCount, fileInfo.totalChunks, null);
+        }
       }
-
-      // 并行下载所有块
-      await Promise.all(downloadPromises);
       console.log('[Receiver] ✓ 所有文件块下载完成');
 
       // 5. 解密并重组文件
       console.log('[Receiver] 解密并重组文件...');
+      console.log('[Receiver] 加密密钥状态:', this.encryptionKey ? '已设置' : '未设置');
+      console.log('[Receiver] 接收到的块数量:', this.receivedChunks.length);
+      console.log('[Receiver] 接收到的块详情:', this.receivedChunks.map((chunk, idx) => ({
+        index: idx,
+        exists: !!chunk,
+        size: chunk ? chunk.size : 0,
+        type: chunk ? chunk.constructor.name : 'null'
+      })));
+      
       const decryptedChunks = await Promise.all(
         this.receivedChunks.map((encryptedChunk, index) => {
           if (!encryptedChunk) {
             throw new Error(`块 ${index} 缺失`);
           }
-          return decryptChunk(encryptedChunk, this.encryptionKey);
+          console.log(`[Receiver] 开始解密块 ${index}...`);
+          return decryptChunk(encryptedChunk, this.encryptionKey).then(decrypted => {
+            console.log(`[Receiver] ✓ 块 ${index} 解密成功`);
+            return decrypted;
+          }).catch(error => {
+            console.error(`[Receiver] ✗ 块 ${index} 解密失败:`, error);
+            throw error;
+          });
         })
       );
 
@@ -215,13 +239,17 @@ class ReceiverService {
       throw new Error(result.msg || '获取加密密钥失败');
     }
 
+    const encryptedKey = result.data.encryptedKey;
+    console.log('[Receiver] 获取到的加密密钥长度:', encryptedKey ? encryptedKey.length : 0);
+    console.log('[Receiver] 加密密钥前50个字符:', encryptedKey ? encryptedKey.substring(0, 50) : 'null');
+
     // 保存会话ID（如果返回了）
     if (result.data.sessionId) {
       this.sessionId = result.data.sessionId;
       console.log('[Receiver] 下载会话ID已保存:', this.sessionId);
     }
 
-    return result.data.encryptedKey;
+    return encryptedKey;
   }
 
   /**
@@ -255,7 +283,87 @@ class ReceiverService {
   }
 
   /**
-   * 下载单个加密块
+   * 批量下载加密块（优化性能）
+   * @param {Array<number>} chunkIndices - 块索引数组
+   * @returns {Promise<void>}
+   */
+  async downloadChunksBatch(chunkIndices) {
+    const requestBody = {
+      chunkIndices: chunkIndices
+    };
+    if (this.sessionId) {
+      requestBody.sessionId = this.sessionId;
+    }
+    
+    console.log(`[Receiver] 批量下载块: [${chunkIndices.join(', ')}]`);
+    const response = await fetch(
+      `${this.apiBase}/relay/codes/${this.lookupCode}/download-chunks`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders({
+          'Content-Type': 'application/json'
+        }),
+        body: JSON.stringify(requestBody)
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.msg || `批量下载块失败: HTTP ${response.status}`);
+    }
+
+    const result = await response.json();
+    if (result.code !== 200 || !result.data) {
+      throw new Error(result.msg || '批量下载块失败');
+    }
+
+    const { chunks, missing, expired } = result.data;
+    
+    // 处理缺失的块
+    if (missing && missing.length > 0) {
+      console.warn(`[Receiver] ⚠️ 缺失的块: [${missing.join(', ')}]`);
+      // 尝试单独下载缺失的块
+      for (const missingIndex of missing) {
+        try {
+          await this.downloadChunk(missingIndex);
+        } catch (error) {
+          console.error(`[Receiver] ✗ 下载缺失块 ${missingIndex} 失败:`, error);
+          throw new Error(`块 ${missingIndex} 不存在或已过期`);
+        }
+      }
+    }
+    
+    // 处理过期的块
+    if (expired && expired.length > 0) {
+      console.warn(`[Receiver] ⚠️ 过期的块: [${expired.join(', ')}]`);
+      throw new Error(`块 [${expired.join(', ')}] 已过期`);
+    }
+    
+    // 解码并存储块数据
+    for (const [indexStr, chunkData] of Object.entries(chunks)) {
+      const chunkIndex = parseInt(indexStr);
+      try {
+        // 解码 base64 数据
+        const base64Data = chunkData.data;
+        const binaryString = atob(base64Data);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        const blob = new Blob([bytes], { type: 'application/octet-stream' });
+        
+        // 存储块
+        this.receivedChunks[chunkIndex] = blob;
+        console.log(`[Receiver] ✓ 块 ${chunkIndex} 下载成功`);
+      } catch (error) {
+        console.error(`[Receiver] ✗ 处理块 ${chunkIndex} 失败:`, error);
+        throw new Error(`处理块 ${chunkIndex} 失败: ${error.message}`);
+      }
+    }
+  }
+
+  /**
+   * 下载单个加密块（用于补充缺失的块）
    * @param {number} chunkIndex - 块索引
    * @returns {Promise<void>}
    */
@@ -266,17 +374,48 @@ class ReceiverService {
       url += `?session_id=${encodeURIComponent(this.sessionId)}`;
     }
     
+    console.log(`[Receiver] 下载块 ${chunkIndex}...`);
     const response = await fetch(url, {
       headers: getAuthHeaders()
     });
 
+    console.log(`[Receiver] 块 ${chunkIndex} 响应状态: ${response.status} ${response.statusText}`);
+    console.log(`[Receiver] 块 ${chunkIndex} Content-Type: ${response.headers.get('content-type')}`);
+
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
+      // 尝试解析错误响应
+      const contentType = response.headers.get('content-type') || '';
+      let errorData = {};
+      if (contentType.includes('application/json')) {
+        errorData = await response.json().catch(() => ({}));
+      } else {
+        // 如果不是 JSON，尝试读取文本
+        const errorText = await response.text().catch(() => '');
+        console.error(`[Receiver] 块 ${chunkIndex} 错误响应:`, errorText);
+      }
       throw new Error(errorData.msg || `下载块 ${chunkIndex} 失败: HTTP ${response.status}`);
+    }
+
+    // 检查 Content-Type，确保是二进制数据而不是 JSON
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      // 如果返回的是 JSON，说明是错误响应
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.msg || `下载块 ${chunkIndex} 失败: 服务器返回了 JSON 错误响应`);
     }
 
     // 读取加密块
     const encryptedChunk = await response.blob();
+    console.log(`[Receiver] 块 ${chunkIndex} 下载成功，大小: ${encryptedChunk.size} 字节`);
+    
+    // 检查块大小是否合理（至少应该有12字节IV + 一些加密数据）
+    if (encryptedChunk.size < 12) {
+      // 可能是错误响应，尝试读取为文本
+      const text = await encryptedChunk.text();
+      console.error(`[Receiver] 块 ${chunkIndex} 数据异常，可能是错误响应:`, text.substring(0, 100));
+      throw new Error(`下载块 ${chunkIndex} 失败: 数据异常（大小: ${encryptedChunk.size} 字节）`);
+    }
+    
     this.receivedChunks[chunkIndex] = encryptedChunk;
 
     // 更新进度（确保进度值有效）

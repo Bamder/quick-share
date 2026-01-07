@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, EmailStr, Field
 from jose import jwt
 
@@ -230,8 +230,8 @@ def create_access_token(user_id: int) -> str:
     # 构建payload
     payload = {
         "sub": str(user_id),
-        "exp": datetime.utcnow() + timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES),
-        "iat": datetime.utcnow()
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES),
+        "iat": datetime.now(timezone.utc)
     }
     
     # 生成token

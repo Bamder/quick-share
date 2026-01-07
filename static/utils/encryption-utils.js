@@ -289,14 +289,30 @@ export async function encryptChunk(chunk, key) {
  */
 export async function decryptChunk(encryptedChunk, key) {
     try {
+        console.log('[Encryption] 开始解密文件块...');
+        console.log('[Encryption] encryptedChunk 类型:', encryptedChunk.constructor.name);
+        console.log('[Encryption] encryptedChunk 大小:', encryptedChunk.size, '字节');
+        console.log('[Encryption] key 类型:', key.constructor.name);
+        
         // 读取加密数据
         const arrayBuffer = await encryptedChunk.arrayBuffer();
+        console.log('[Encryption] arrayBuffer 长度:', arrayBuffer.byteLength, '字节');
+        
+        // 检查数据长度是否足够（至少需要12字节IV）
+        if (arrayBuffer.byteLength < 12) {
+            throw new Error(`加密块数据太短: ${arrayBuffer.byteLength} 字节，至少需要12字节（IV）`);
+        }
         
         // 提取IV（前12字节）和加密数据
         const iv = new Uint8Array(arrayBuffer, 0, 12);
         const encrypted = new Uint8Array(arrayBuffer, 12);
         
+        console.log('[Encryption] IV 长度:', iv.length, '字节');
+        console.log('[Encryption] 加密数据长度:', encrypted.length, '字节');
+        console.log('[Encryption] IV (hex):', Array.from(iv).map(b => b.toString(16).padStart(2, '0')).join(' '));
+        
         // 解密数据
+        console.log('[Encryption] 开始调用 crypto.subtle.decrypt...');
         const decrypted = await crypto.subtle.decrypt(
             {
                 name: "AES-GCM",
@@ -306,10 +322,17 @@ export async function decryptChunk(encryptedChunk, key) {
             encrypted
         );
         
+        console.log('[Encryption] ✓ 解密成功，解密后长度:', decrypted.byteLength, '字节');
+        
         return new Blob([decrypted]);
     } catch (error) {
         console.error('[Encryption] 解密文件块失败:', error);
-        throw new Error('文件块解密失败，可能是密钥错误或数据损坏');
+        console.error('[Encryption] 错误详情:', {
+            name: error.name,
+            message: error.message,
+            stack: error.stack
+        });
+        throw new Error(`文件块解密失败: ${error.message}`);
     }
 }
 
@@ -535,8 +558,13 @@ export async function encryptKeyWithPickupCode(fileEncryptionKey, pickupCode) {
  */
 export async function decryptKeyWithPickupCode(encryptedKeyBase64, pickupCode) {
     try {
+        console.log('[Encryption] 开始解密文件加密密钥...');
+        console.log('[Encryption] encryptedKeyBase64 长度:', encryptedKeyBase64 ? encryptedKeyBase64.length : 0);
+        console.log('[Encryption] pickupCode:', pickupCode);
+        
         // 从取件码派生密钥
         const derivedKey = await deriveKeyFromPickupCode(pickupCode);
+        console.log('[Encryption] ✓ 派生密钥已生成');
         
         // 解码Base64
         const binaryString = atob(encryptedKeyBase64);
@@ -545,9 +573,18 @@ export async function decryptKeyWithPickupCode(encryptedKeyBase64, pickupCode) {
             arrayBuffer[i] = binaryString.charCodeAt(i);
         }
         
+        console.log('[Encryption] Base64 解码完成，数据长度:', arrayBuffer.length);
+        
+        // 检查数据长度是否足够（至少需要12字节IV + 一些加密数据）
+        if (arrayBuffer.length < 12) {
+            throw new Error(`加密密钥数据太短: ${arrayBuffer.length} 字节，至少需要12字节（IV）`);
+        }
+        
         // 提取IV（前12字节）和加密数据
         const iv = new Uint8Array(arrayBuffer.buffer, 0, 12);
         const encrypted = new Uint8Array(arrayBuffer.buffer, 12);
+        
+        console.log('[Encryption] IV 长度:', iv.length, '加密数据长度:', encrypted.length);
         
         // 使用派生密钥解密
         const decrypted = await crypto.subtle.decrypt(
@@ -558,6 +595,13 @@ export async function decryptKeyWithPickupCode(encryptedKeyBase64, pickupCode) {
             derivedKey,
             encrypted
         );
+        
+        console.log('[Encryption] ✓ 密钥解密成功，解密后长度:', decrypted.byteLength);
+        
+        // 检查解密后的数据长度（应该是32字节，256位）
+        if (decrypted.byteLength !== 32) {
+            console.warn('[Encryption] 警告: 解密后的密钥长度不是32字节:', decrypted.byteLength);
+        }
         
         // 导入解密后的密钥
         const fileEncryptionKey = await crypto.subtle.importKey(
@@ -571,10 +615,16 @@ export async function decryptKeyWithPickupCode(encryptedKeyBase64, pickupCode) {
             ['encrypt', 'decrypt']
         );
         
+        console.log('[Encryption] ✓ 文件加密密钥已导入');
         return fileEncryptionKey;
     } catch (error) {
         console.error('[Encryption] 使用取件码解密密钥失败:', error);
-        throw new Error('无法使用取件码解密密钥，可能是取件码错误');
+        console.error('[Encryption] 错误详情:', {
+            name: error.name,
+            message: error.message,
+            stack: error.stack
+        });
+        throw new Error(`无法使用取件码解密密钥: ${error.message}`);
     }
 }
 

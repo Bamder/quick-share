@@ -64,8 +64,12 @@ export async function apiRequest(
     ...getAuthHeaders(customHeaders),
   };
 
-  // 如果body不是FormData且不为null，则添加Content-Type头
-  if (body && !(body instanceof FormData)) {
+  // GET 和 HEAD 请求不能有 body
+  const methodsWithoutBody = ['GET', 'HEAD'];
+  const canHaveBody = !methodsWithoutBody.includes(method.toUpperCase());
+
+  // 如果body不是FormData且不为null，则添加Content-Type头（仅当请求可以包含body时）
+  if (canHaveBody && body && !(body instanceof FormData)) {
     headers["Content-Type"] = "application/json";
   }
 
@@ -74,8 +78,8 @@ export async function apiRequest(
     headers,
   };
 
-  // 添加请求体
-  if (body) {
+  // 添加请求体（仅当请求可以包含body时）
+  if (canHaveBody && body) {
     options.body = body instanceof FormData ? body : JSON.stringify(body);
   }
 

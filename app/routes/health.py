@@ -1,6 +1,6 @@
 ﻿from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import text
 from app.utils.response import success_response
 from app.extensions import get_db
@@ -28,7 +28,7 @@ async def check_health(db: Session = Depends(get_db)):
     return success_response(data={
         "status": "healthy",
         "database": db_status,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
         "service": "文件闪传系统API",
         "version": "2.0.0",
         "message": "服务运行正常"

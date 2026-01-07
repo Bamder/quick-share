@@ -4,10 +4,10 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form, Body, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from pydantic import BaseModel
 import hashlib
@@ -15,10 +15,10 @@ import io
 
 from app.utils.response import (
     success_response, created_response,
-    not_found_response, bad_request_response
+    not_found_response, bad_request_response, error_response
 )
 from app.utils.validation import validate_pickup_code
-from app.utils.pickup_code import check_and_update_expired_pickup_code
+from app.utils.pickup_code import check_and_update_expired_pickup_code, ensure_aware_datetime, DatetimeUtil
 from app.extensions import get_db
 from app.models.pickup_code import PickupCode
 import logging
@@ -26,37 +26,23 @@ import logging
 # 导入认证相关功能
 from app.routes.auth import get_current_user
 
+# 导入服务层
+from app.services.cache_service import chunk_cache, file_info_cache, encrypted_key_cache
+from app.services.mapping_service import lookup_code_mapping, get_original_lookup_code, update_cache_expire_at
+from app.services.pool_service import upload_pool, download_pool
+from app.services.pickup_code_service import get_pickup_code_by_lookup
+from app.services.upload_service import upload_chunk as upload_chunk_service, upload_complete as upload_complete_service
+from app.services.download_service import (
+    active_download_sessions,
+    download_chunk as download_chunk_service,
+    download_chunks_batch as download_chunks_batch_service,
+    download_complete as download_complete_service
+)
+from app.utils.cache import cache_manager
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["服务器中转"], prefix="/relay")
-
-# 跟踪正在进行的下载会话（用于并发下载控制）
-# 键：lookup_code，值：set of session_id（用于标识不同的下载会话）
-active_download_sessions = {}
-
-
-def get_pickup_code_by_lookup(db: Session, lookup_code: str) -> Optional[PickupCode]:
-    """
-    使用查找码（6位）查询取件码
-    
-    参数：
-    - db: 数据库会话
-    - lookup_code: 6位查找码（服务器只接收查找码，不接触密钥码）
-    
-    返回：
-    - PickupCode对象，如果找到
-    - None，如果未找到
-    
-    安全性：
-    - 服务器只接收和查询6位查找码
-    - 后6位密钥码完全不进入服务器
-    """
-    # 直接使用6位查找码查询数据库
-    pickup_code = db.query(PickupCode).filter(
-        PickupCode.code == lookup_code
-    ).first()
-    
-    return pickup_code
 
 
 class UploadCompleteRequest(BaseModel):
@@ -67,247 +53,17 @@ class UploadCompleteRequest(BaseModel):
     mimeType: str
 
 
-# 临时内存存储（生产环境应使用Redis）
-# 格式: {lookup_code: {chunk_index: {data: bytes, hash: str, created_at: datetime, expires_at: datetime}}}
-# 注意：使用前6位查找码作为键，服务器不需要知道后6位密钥码
-chunk_cache = {}
-
-# 文件信息缓存（格式: {lookup_code: {fileName, fileSize, mimeType, totalChunks, uploadedAt}}）
-file_info_cache = {}
-
-# 加密密钥缓存（格式: {lookup_code: encryptedKeyBase64}）
-# 
-# ============================================================================
-# 密钥概念体系（4个密钥相关概念及其关系）
-# ============================================================================
-# 
-# 1. 文件加密密钥（原始密钥 / File Encryption Key）
-#    - 类型：CryptoKey（AES-GCM，256位）
-#    - 生成方式：随机生成（客户端）
-#    - 用途：直接加密/解密文件块
-#    - 存储位置：客户端浏览器缓存（以文件哈希为键）
-#    - 是否传输到服务器：否（只传输加密后的版本）
-# 
-# 2. 密钥码（6位密钥码 / Key Code）
-#    - 类型：字符串（6位大写字母+数字）
-#    - 来源：取件码的后6位（如 "ABC123DEF456" 中的 "DEF456"）
-#    - 用途：作为材料派生密钥，用于加密/解密文件加密密钥
-#    - 是否传输到服务器：否（服务器只接收前6位查找码）
-# 
-# 3. 派生密钥（Derived Key）
-#    - 类型：CryptoKey（AES-GCM，256位）
-#    - 生成方式：从密钥码通过PBKDF2派生（100000次迭代，SHA-256）
-#    - 用途：加密/解密文件加密密钥（原始密钥）
-#    - 存储位置：不存储，每次使用时临时派生（客户端）
-#    - 是否传输到服务器：否（只在客户端使用）
-# 
-# 4. 加密后的文件加密密钥（Encrypted File Encryption Key）
-#    - 类型：字符串（Base64编码）
-#    - 生成方式：用派生密钥加密文件加密密钥（原始密钥）
-#    - 用途：安全存储到服务器，供接收者下载
-#    - 存储位置：服务器内存缓存（本变量 encrypted_key_cache）
-#    - 是否传输到服务器：是（这是唯一传输到服务器的密钥相关数据）
-# 
-# ============================================================================
-# 密钥关系链（加密流程）
-# ============================================================================
-# 
-# 取件码（12位）
-# ├── 查找码（前6位）→ 用于服务器查询和缓存键
-# └── 密钥码（后6位）→ 派生密钥 → 加密 → 文件加密密钥（原始密钥）→ 加密文件块
-# 
-# 详细流程：
-# 1. Sender生成文件加密密钥（原始密钥）→ 随机生成，256位AES-GCM
-# 2. Sender提取密钥码（后6位）→ 从取件码提取
-# 3. Sender派生密钥 → 从密钥码通过PBKDF2派生256位AES-GCM密钥
-# 4. Sender加密文件加密密钥 → 用派生密钥加密原始密钥
-# 5. Sender存储到服务器 → 只存储加密后的密钥（Base64编码）← 存储在此缓存中
-# 6. Receiver从服务器获取 → 获取加密后的密钥（从本缓存获取）
-# 7. Receiver派生密钥 → 从密钥码通过PBKDF2派生相同的密钥
-# 8. Receiver解密文件加密密钥 → 用派生密钥解密，得到原始密钥
-# 9. Receiver解密文件块 → 用原始密钥解密文件块
-# 
-# ============================================================================
-# 服务器可见性
-# ============================================================================
-# 
-# 服务器可以看到（本缓存存储的内容）：
-# - 查找码（前6位）：用于查询和缓存键
-# - 加密后的文件加密密钥：Base64编码的加密数据（本缓存的值）
-# - 加密后的文件块：加密后的文件数据
-# 
-# 服务器无法看到：
-# - 密钥码（后6位）：不传输到服务器
-# - 派生密钥：只在客户端生成和使用
-# - 文件加密密钥（原始密钥）：不传输到服务器
-# - 文件内容：已加密，无法解密
-# 
-# 因此，即使服务器被完全攻破，攻击者也无法：
-# - 解密文件内容（缺少密钥码和原始密钥）
-# - 获取原始密钥（缺少密钥码来派生密钥）
-# - 解密文件块（缺少原始密钥）
-encrypted_key_cache = {}
-
-# 查找码映射表（格式: {new_lookup_code: original_lookup_code}）
-# 用于支持一个文件对应多个取件码，复用文件块缓存
-# 当创建新取件码复用旧文件时，新 lookup_code 映射到原始的 lookup_code
-lookup_code_mapping = {}
+class DownloadChunksRequest(BaseModel):
+    """批量下载请求模型"""
+    chunkIndices: list[int]
+    sessionId: Optional[str] = None
 
 
-def get_original_lookup_code(lookup_code: str) -> str:
-    """
-    获取原始的查找码（如果存在映射，返回映射的原始码；否则创建自映射并返回自身）
-    
-    参数:
-    - lookup_code: 当前查找码（6位）
-    
-    返回:
-    - 原始的查找码（6位）
-    """
-    if lookup_code not in lookup_code_mapping:
-        # 如果映射表中不存在，创建自映射（键值相同）
-        lookup_code_mapping[lookup_code] = lookup_code
-    return lookup_code_mapping[lookup_code]
+class DownloadCompleteRequest(BaseModel):
+    """下载完成请求模型"""
+    session_id: Optional[str] = None
 
 
-def get_max_expire_at_for_original_lookup_code(original_lookup_code: str, db: Session) -> Optional[datetime]:
-    """
-    获取所有映射到同一个 original_lookup_code 的取件码中最晚的过期时间
-    
-    参数:
-    - original_lookup_code: 原始查找码（6位）
-    - db: 数据库会话
-    
-    返回:
-    - 最晚的过期时间，如果没有找到则返回 None
-    """
-    # 找到所有映射到 original_lookup_code 的 lookup_code
-    related_lookup_codes = [
-        lookup_code for lookup_code, orig_code in lookup_code_mapping.items()
-        if orig_code == original_lookup_code
-    ]
-    
-    if not related_lookup_codes:
-        return None
-    
-    # 查询这些取件码的过期时间
-    pickup_codes = db.query(PickupCode).filter(
-        PickupCode.code.in_(related_lookup_codes),
-        PickupCode.status.in_(["waiting", "transferring"])  # 只考虑有效的取件码
-    ).all()
-    
-    if not pickup_codes:
-        return None
-    
-    # 找到最晚的过期时间
-    max_expire_at = max(pickup_code.expire_at for pickup_code in pickup_codes)
-    return max_expire_at
-
-
-def update_cache_expire_at(original_lookup_code: str, new_expire_at: datetime, db: Session):
-    """
-    更新缓存的过期时间（取所有相关取件码中最晚的过期时间）
-    
-    参数:
-    - original_lookup_code: 原始查找码（6位）
-    - new_expire_at: 新取件码的过期时间
-    - db: 数据库会话
-    """
-    # 获取所有相关取件码中最晚的过期时间
-    max_expire_at = get_max_expire_at_for_original_lookup_code(original_lookup_code, db)
-    
-    # 如果找到了更晚的过期时间，使用它；否则使用新取件码的过期时间
-    if max_expire_at and max_expire_at > new_expire_at:
-        expire_at = max_expire_at
-        logger.info(f"更新缓存过期时间: original_lookup_code={original_lookup_code}, 使用最晚过期时间={expire_at}（新码={new_expire_at}）")
-    else:
-        expire_at = new_expire_at
-        logger.info(f"更新缓存过期时间: original_lookup_code={original_lookup_code}, 使用新码过期时间={expire_at}")
-    
-    # 更新文件块缓存的过期时间
-    if original_lookup_code in chunk_cache:
-        for chunk_index, chunk_data in chunk_cache[original_lookup_code].items():
-            chunk_data['pickup_expire_at'] = expire_at
-            chunk_data['expires_at'] = expire_at
-    
-    # 更新文件信息缓存的过期时间
-    if original_lookup_code in file_info_cache:
-        file_info_cache[original_lookup_code]['pickup_expire_at'] = expire_at
-    
-    # 注意：encrypted_key_cache 存储的是字符串，过期时间信息存储在 file_info_cache 或 chunk_cache 中
-
-
-def cleanup_expired_chunks(db: Session = None):
-    """
-    清理过期的文件块、文件信息和加密密钥
-    
-    使用取件码的过期时间（绝对时间）来判断是否过期
-    """
-    now = datetime.utcnow()
-    expired_lookup_codes = []
-    
-    # 遍历所有查找码（前6位）
-    for lookup_code, chunks in chunk_cache.items():
-        expired_chunks = []
-        # 获取该查找码的过期时间（从第一个块中获取，所有块共享同一个过期时间）
-        pickup_expire_at = None
-        if chunks:
-            first_chunk = next(iter(chunks.values()))
-            pickup_expire_at = first_chunk.get('pickup_expire_at')
-        
-        # 使用取件码的过期时间（绝对时间）来判断
-        if pickup_expire_at and now > pickup_expire_at:
-            # 整个取件码已过期，标记所有块为过期
-            expired_chunks = list(chunks.keys())
-        else:
-            # 检查单个块的过期时间（如果设置了）
-            for chunk_index, chunk_data in chunks.items():
-                if chunk_data.get('expires_at') and now > chunk_data['expires_at']:
-                    expired_chunks.append(chunk_index)
-        
-        for chunk_index in expired_chunks:
-            del chunks[chunk_index]
-        
-        if not chunks:
-            expired_lookup_codes.append(lookup_code)
-    
-    # 清理所有过期的查找码相关数据（使用绝对时间判断）
-    for lookup_code in list(chunk_cache.keys()):
-        if lookup_code in expired_lookup_codes:
-            continue
-        
-        # 检查文件信息缓存的过期时间
-        if lookup_code in file_info_cache:
-            file_info = file_info_cache[lookup_code]
-            if file_info.get('pickup_expire_at') and now > file_info['pickup_expire_at']:
-                del file_info_cache[lookup_code]
-                if lookup_code not in expired_lookup_codes:
-                    expired_lookup_codes.append(lookup_code)
-        
-        # 检查加密密钥缓存的过期时间
-        if lookup_code in encrypted_key_cache:
-            # encrypted_key_cache 存储的是字符串，需要从其他地方获取过期时间
-            # 如果文件信息缓存中有过期时间，使用它；否则从文件块缓存中获取
-            pickup_expire_at = None
-            if lookup_code in file_info_cache:
-                pickup_expire_at = file_info_cache[lookup_code].get('pickup_expire_at')
-            elif lookup_code in chunk_cache and chunk_cache[lookup_code]:
-                first_chunk = next(iter(chunk_cache[lookup_code].values()))
-                pickup_expire_at = first_chunk.get('pickup_expire_at')
-            
-            if pickup_expire_at and now > pickup_expire_at:
-                del encrypted_key_cache[lookup_code]
-                if lookup_code not in expired_lookup_codes:
-                    expired_lookup_codes.append(lookup_code)
-    
-    # 清理所有过期的查找码相关数据
-    for lookup_code in expired_lookup_codes:
-        if lookup_code in chunk_cache:
-            del chunk_cache[lookup_code]
-        if lookup_code in file_info_cache:
-            del file_info_cache[lookup_code]
-        if lookup_code in encrypted_key_cache:
-            del encrypted_key_cache[lookup_code]
 
 
 @router.post("/codes/{code}/upload-chunk")
@@ -332,134 +88,15 @@ async def upload_chunk(
                 detail="chunk_index 必须作为 Form 数据或查询参数提供"
             )
         chunk_index = chunk_index_query
-    """
-    上传加密的文件块（流式传输）
     
-    特点：
-    - 文件块在客户端加密后上传
-    - 服务器只存储加密后的数据，无法查看内容
-    - 数据存储在内存中，不写入磁盘
-    - 支持一对多：多个接收者可以同时下载
-    """
-    # 检查权限：只有登录用户才能上传文件块
-    if not current_user:
-        return bad_request_response(
-            msg="只有登录用户才能上传文件块",
-            data={"code": "UNAUTHORIZED", "status": "unauthorized"}
-        )
-    
-    # 验证取件码（服务器只接收6位查找码）
-    if not validate_pickup_code(code):
-        return bad_request_response(msg="取件码格式错误，必须为6位大写字母或数字")
-    
-    # 使用查找码查询取件码（服务器只接收6位查找码，不接触后6位密钥码）
-    pickup_code = get_pickup_code_by_lookup(db, code)
-    if not pickup_code:
-        return not_found_response(msg=f"取件码不存在")
-    
-    # 检查并更新过期状态
-    is_expired = check_and_update_expired_pickup_code(pickup_code, db)
-    if is_expired or pickup_code.status == "expired":
-        return bad_request_response(
-            msg="取件码已过期，无法使用",
-            data={"code": "EXPIRED", "status": "expired"}
-        )
-    
-    if pickup_code.status == "completed":
-        return bad_request_response(
-            msg="取件码已完成，无法使用",
-            data={"code": "COMPLETED", "status": "completed"}
-        )
-    
-    # 检查使用次数限制
-    used_count = pickup_code.used_count or 0
-    limit_count = pickup_code.limit_count or 3
-    if limit_count != 999 and used_count >= limit_count:
-        return bad_request_response(
-            msg="取件码已达到使用上限，无法继续使用",
-            data={
-                "code": "LIMIT_REACHED",
-                "usedCount": used_count,
-                "limitCount": limit_count,
-                "remaining": 0
-            }
-        )
-    
-    # 清理过期块
-    cleanup_expired_chunks()
-    
-    # code 就是查找码（6位），直接用作缓存键
-    lookup_code = code
-    
-    # 检查是否存在映射，如果存在则使用原始的 lookup_code 访问缓存
-    original_lookup_code = get_original_lookup_code(lookup_code)
-    
-    # 读取加密后的数据块
-    encrypted_data = await chunk_data.read()
-    
-    if not encrypted_data:
-        return bad_request_response(msg="文件块数据为空")
-    
-    # 计算数据块哈希（用于验证完整性）
-    chunk_hash = hashlib.sha256(encrypted_data).hexdigest()
-    
-    # 检查文件块是否已存在（通过映射表，可能已有缓存）
-    # 如果已存在且未过期，直接返回成功，不重复存储
-    if original_lookup_code in chunk_cache:
-        if chunk_index in chunk_cache[original_lookup_code]:
-            existing_chunk = chunk_cache[original_lookup_code][chunk_index]
-            # 检查是否过期（使用取件码的过期时间，绝对时间）
-            pickup_expire_at = existing_chunk.get('pickup_expire_at') or existing_chunk.get('expires_at')
-            if pickup_expire_at and datetime.utcnow() < pickup_expire_at:
-                # 文件块已存在且未过期，更新过期时间为最晚的过期时间，然后返回成功（复用现有块）
-                logger.info(f"文件块 {chunk_index} 已存在（通过映射表复用），更新过期时间并跳过上传")
-                # 更新缓存的过期时间（取所有相关取件码中最晚的过期时间）
-                update_cache_expire_at(original_lookup_code, pickup_code.expire_at, db)
-                # 获取更新后的过期时间
-                updated_expire_at = chunk_cache[original_lookup_code][chunk_index].get('pickup_expire_at') or chunk_cache[original_lookup_code][chunk_index].get('expires_at')
-                return success_response(
-                    msg="文件块已存在（复用），无需重复上传",
-                    data={
-                        "chunkIndex": chunk_index,
-                        "chunkHash": existing_chunk['hash'],
-                        "reused": True,  # 标记为复用
-                        "expiresAt": updated_expire_at.isoformat() + "Z"
-                    }
-                )
-    
-    # 存储到内存缓存（不写入磁盘）
-    # 使用原始的查找码作为键，支持多个 lookup_code 共享同一个文件块缓存
-    if original_lookup_code not in chunk_cache:
-        chunk_cache[original_lookup_code] = {}
-    
-    # 存储新块（如果块已存在，上面的逻辑已经处理并返回了）
-    # 使用取件码的过期时间（绝对时间）作为文件块的过期时间
-    # 如果已存在其他块（复用文件），更新所有块的过期时间为所有相关取件码中最晚的过期时间
-    if original_lookup_code in chunk_cache and chunk_cache[original_lookup_code]:
-        # 已有其他块（复用文件），更新所有块的过期时间
-        update_cache_expire_at(original_lookup_code, pickup_code.expire_at, db)
-        # 使用更新后的过期时间
-        first_chunk = next(iter(chunk_cache[original_lookup_code].values()))
-        pickup_expire_at = first_chunk.get('pickup_expire_at') or first_chunk.get('expires_at')
-    else:
-        # 新文件，使用当前取件码的过期时间
-        pickup_expire_at = pickup_code.expire_at
-    
-    chunk_cache[original_lookup_code][chunk_index] = {
-        'data': encrypted_data,
-        'hash': chunk_hash,
-        'created_at': datetime.utcnow(),
-        'pickup_expire_at': pickup_expire_at,  # 取件码的过期时间（绝对时间）
-        'expires_at': pickup_expire_at  # 使用取件码的过期时间，而不是固定的5分钟
-    }
-    
-    return success_response(
-        msg="文件块上传成功（已加密存储）",
-        data={
-            "chunkIndex": chunk_index,
-            "chunkHash": chunk_hash,
-            "expiresAt": pickup_expire_at.isoformat() + "Z"
-        }
+    # 调用服务层处理业务逻辑
+    return await upload_chunk_service(
+        code=code,
+        chunk_data=chunk_data,
+        chunk_index=chunk_index,
+        chunk_index_query=chunk_index,
+        db=db,
+        current_user=current_user
     )
 
 
@@ -478,60 +115,19 @@ async def upload_complete(
     重要：此接口只用于通知上传完成，不会自动创建取件码。
     取件码必须在用户明确点击"生成取件码"按钮时，通过 /api/v1/codes POST 接口创建。
     """
-    # 检查权限：只有登录用户才能调用此接口
-    if not current_user:
-        return bad_request_response(
-            msg="只有登录用户才能调用此接口",
-            data={"code": "UNAUTHORIZED", "status": "unauthorized"}
-        )
-    
-    # 验证取件码（服务器只接收6位查找码）
-    if not validate_pickup_code(code):
-        return bad_request_response(msg="取件码格式错误，必须为6位大写字母或数字")
-    
-    # 使用查找码查询取件码（服务器只接收6位查找码，不接触后6位密钥码）
-    pickup_code = get_pickup_code_by_lookup(db, code)
-    if not pickup_code:
-        return not_found_response(msg=f"取件码不存在")
-    
-    # 提取查找码（前6位）用于缓存键
-    # code 就是查找码（6位），直接用作缓存键
-    lookup_code = code
-    
-    # 检查是否存在映射，如果存在则使用原始的 lookup_code 访问缓存
-    original_lookup_code = get_original_lookup_code(lookup_code)
-    
-    # 存储文件信息
-    # 使用原始的查找码作为键，支持多个 lookup_code 共享同一个文件信息缓存
-    # 如果已存在缓存（复用文件），更新过期时间为所有相关取件码中最晚的过期时间
-    if original_lookup_code in file_info_cache:
-        # 复用文件：更新过期时间为最晚的过期时间
-        update_cache_expire_at(original_lookup_code, pickup_code.expire_at, db)
-    else:
-        # 新文件：使用当前取件码的过期时间
-        file_info_cache[original_lookup_code] = {
-            'fileName': request.fileName,
-            'fileSize': request.fileSize,
-            'mimeType': request.mimeType,
-            'totalChunks': request.totalChunks,
-            'uploadedAt': datetime.utcnow(),
-            'pickup_expire_at': pickup_code.expire_at  # 取件码的过期时间（绝对时间）
-        }
-    
-    return success_response(
-        msg="上传完成通知已接收",
-        data={
-            "code": code,
-            "totalChunks": request.totalChunks,
-            "fileSize": request.fileSize,
-            "fileName": request.fileName
-        }
+    # 调用服务层处理业务逻辑
+    return await upload_complete_service(
+        code=code,
+        request=request,
+        db=db,
+        current_user=current_user
     )
 
 
 @router.post("/codes/{code}/store-encrypted-key")
 async def store_encrypted_key(
     code: str,
+    request: Request,
     encryptedKey: str = Body(..., embed=True),
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
@@ -558,6 +154,11 @@ async def store_encrypted_key(
     - 只有拥有完整取件码（包括后6位密钥码）的用户才能解密
     - 保持端到端加密的安全性
     """
+    logger.info(f"[store-encrypted-key] ========== API 被调用 ==========")
+    logger.info(f"[store-encrypted-key] code={code}, key_length={len(encryptedKey) if encryptedKey else 0}")
+    logger.info(f"[store-encrypted-key] current_user={current_user.id if current_user else None}")
+    logger.info(f"[store-encrypted-key] 请求路径: {request.url.path}, 方法: {request.method}")
+    
     # 检查权限：只有登录用户才能调用此接口
     if not current_user:
         return bad_request_response(
@@ -586,33 +187,72 @@ async def store_encrypted_key(
     # code 就是查找码（6位），直接用作缓存键
     lookup_code = code
     
+    # 获取用户ID（用于缓存隔离）
+    user_id = current_user.id if current_user else None
+    
     # 检查是否存在映射，如果存在则使用原始的 lookup_code 访问缓存
-    original_lookup_code = get_original_lookup_code(lookup_code)
+    original_lookup_code = get_original_lookup_code(lookup_code, db)
     
     # 存储加密后的密钥
-    # 使用原始的查找码作为键，支持多个 lookup_code 共享同一个加密密钥缓存
-    # 注意：encrypted_key_cache 存储的是字符串，过期时间信息存储在 file_info_cache 或 chunk_cache 中
+    # 方案2：每个 lookup_code 存储自己的加密密钥（因为每个取件码的密钥码不同，加密后的密钥也不同）
+    # 这样旧取件码可以继续使用旧的加密密钥，新取件码使用新的加密密钥
+    # 注意：所有 lookup_code 都映射到同一个 original_lookup_code，共享文件块缓存
     
-    # 检查是否已存在密钥（复用文件的情况）
-    if original_lookup_code in encrypted_key_cache:
-        # 如果密钥相同，说明是复用文件，更新缓存的过期时间
-        if encrypted_key_cache[original_lookup_code] == encryptedKey:
-            logger.info(f"复用现有密钥: lookup_code={lookup_code}, original_lookup_code={original_lookup_code}, 更新过期时间")
-            update_cache_expire_at(original_lookup_code, pickup_code.expire_at, db)
+    # 直接使用 pickup_code.expire_at 作为过期时间（不依赖其他缓存，因为文件块可能还在上传）
+    expire_at = ensure_aware_datetime(pickup_code.expire_at)
+    now = datetime.now(timezone.utc)
+    
+    # 检查过期时间是否有效（至少还有1秒才过期）
+    if expire_at <= now:
+        logger.warning(f"取件码已过期或即将过期，无法存储密钥: lookup_code={lookup_code}, expire_at={expire_at}, now={now}")
+        return bad_request_response(
+            msg="取件码已过期，无法存储密钥",
+            data={"code": "EXPIRED", "status": "expired"}
+        )
+    
+    logger.info(f"准备存储密钥: lookup_code={lookup_code}, user_id={user_id}, key_length={len(encryptedKey)}, expire_at={expire_at}")
+    
+    # 检查是否已存在该 lookup_code 的密钥
+    key_exists = encrypted_key_cache.exists(lookup_code, user_id)
+    logger.info(f"检查密钥是否存在: lookup_code={lookup_code}, user_id={user_id}, exists={key_exists}")
+    if key_exists:
+        # 如果密钥相同，说明是重复上传，更新过期时间
+        existing_key = encrypted_key_cache.get(lookup_code, user_id)
+        if existing_key == encryptedKey:
+            logger.info(f"密钥已存在且相同: lookup_code={lookup_code}, user_id={user_id}, 更新过期时间")
+            # 更新该 lookup_code 的密钥过期时间
+            encrypted_key_cache.set(lookup_code, encryptedKey, user_id, expire_at)
         else:
-            # 密钥不同，说明是新文件，替换密钥（旧码将无法使用）
-            logger.warning(f"密钥已更换: lookup_code={lookup_code}, original_lookup_code={original_lookup_code}, 旧密钥将被替换")
-            encrypted_key_cache[original_lookup_code] = encryptedKey
-            # 新文件，使用新取件码的过期时间
-            if original_lookup_code in file_info_cache:
-                file_info_cache[original_lookup_code]['pickup_expire_at'] = pickup_code.expire_at
-            if original_lookup_code in chunk_cache:
-                for chunk_data in chunk_cache[original_lookup_code].values():
-                    chunk_data['pickup_expire_at'] = pickup_code.expire_at
-                    chunk_data['expires_at'] = pickup_code.expire_at
+            # 密钥不同，说明取件码的密钥码可能已更改，更新密钥
+            logger.warning(f"密钥已存在但不同: lookup_code={lookup_code}, user_id={user_id}, 更新密钥")
+            encrypted_key_cache.set(lookup_code, encryptedKey, user_id, expire_at)
+            logger.info(f"已更新密钥: lookup_code={lookup_code}, user_id={user_id}, key_length={len(encryptedKey)}, expire_at={expire_at}")
     else:
-        # 新密钥，直接存储
-        encrypted_key_cache[original_lookup_code] = encryptedKey
+        # 新密钥，直接存储（使用 lookup_code 作为键，每个取件码有自己的加密密钥）
+        encrypted_key_cache.set(lookup_code, encryptedKey, user_id, expire_at)
+        logger.info(f"存储新密钥成功: lookup_code={lookup_code}, user_id={user_id}, key_length={len(encryptedKey)}, expire_at={expire_at}")
+    
+    # 最终验证：确保密钥确实已存储
+    # 注意：如果使用 Redis，可能存在短暂的延迟，所以先等待一下
+    import time
+    time.sleep(0.1)  # 等待 100ms，确保 Redis 写入完成
+    
+    final_check = encrypted_key_cache.exists(lookup_code, user_id)
+    logger.info(f"最终验证: lookup_code={lookup_code}, user_id={user_id}, exists={final_check}")
+    if not final_check:
+        logger.error(f"最终验证失败: lookup_code={lookup_code}, user_id={user_id} 不在缓存中，存储可能失败")
+        # 返回错误响应，而不是成功响应
+        return JSONResponse(
+            status_code=500,
+            content=error_response(500, "存储加密密钥失败，请重试")
+        )
+    
+    # 如果复用文件（lookup_code != original_lookup_code），更新文件块和文件信息的过期时间
+    # 但保持每个 lookup_code 的加密密钥独立
+    if lookup_code != original_lookup_code:
+        # 复用文件：更新文件块和文件信息的过期时间（取所有相关取件码中最晚的过期时间）
+        update_cache_expire_at(original_lookup_code, pickup_code.expire_at, db, user_id)
+        logger.info(f"复用文件: lookup_code={lookup_code}, original_lookup_code={original_lookup_code}, user_id={user_id}, 已更新文件块和文件信息的过期时间")
     
     logger.info(f"加密密钥已存储: lookup_code={lookup_code}, original_lookup_code={original_lookup_code}, key_length={len(encryptedKey)}, expire_at={pickup_code.expire_at}")
     
@@ -672,53 +312,124 @@ async def get_encrypted_key(
     # code 就是查找码（6位），直接用作缓存键
     lookup_code = code
     
-    # 检查是否存在映射，如果存在则使用原始的 lookup_code 访问缓存
-    original_lookup_code = get_original_lookup_code(lookup_code)
+    # 注意：下载时不需要用户ID，因为接收者可能不是上传者
+    # 但为了兼容性，我们尝试从取件码关联的文件记录中获取上传者ID
+    # 如果无法获取，使用 None（向后兼容）
+    user_id = None
+    try:
+        # 尝试从数据库获取文件的上传者ID
+        from app.models.file import File
+        file_record = db.query(File).filter(File.id == pickup_code.file_id).first()
+        if file_record and file_record.uploader_id:
+            user_id = file_record.uploader_id
+    except Exception as e:
+        logger.debug(f"无法获取上传者ID: {e}")
     
-    # 检查使用次数限制（考虑正在进行的下载）
+    # 检查是否存在映射，如果存在则使用原始的 lookup_code 访问缓存
+    original_lookup_code = get_original_lookup_code(lookup_code, db)
+    
+    # 检查使用次数限制（只检查已完成的下载次数，不考虑正在进行的下载）
+    # 注意：active_count 只在真正开始下载块时才计算，避免误判
     used_count = pickup_code.used_count or 0
     limit_count = pickup_code.limit_count or 3
     
-    # 计算正在进行的下载数量
-    active_count = len(active_download_sessions.get(original_lookup_code, set()))
-    
-    # 总使用量 = 已完成次数 + 正在进行的下载数
-    total_usage = used_count + active_count
-    
-    # 如果总使用量已达到上限，拒绝新的下载请求
-    if limit_count != 999 and total_usage >= limit_count:
+    # 如果已完成的下载次数已达到上限，拒绝新的下载请求
+    # 注意：这里不检查 active_count，因为获取密钥时还没有真正开始下载
+    if limit_count != 999 and used_count >= limit_count:
         return bad_request_response(
             msg="取件码已达到使用上限，无法继续使用",
             data={
                 "code": "LIMIT_REACHED",
                 "usedCount": used_count,
-                "activeCount": active_count,
+                "activeCount": 0,  # 获取密钥时还没有活跃会话
                 "limitCount": limit_count,
                 "remaining": 0
             }
         )
     
     # 生成下载会话ID（用于跟踪这个下载）
+    # 注意：此时不立即添加到 active_download_sessions，只有在真正开始下载块时才添加
     import uuid
     session_id = str(uuid.uuid4())
-    
-    # 记录这个下载会话
-    if original_lookup_code not in active_download_sessions:
-        active_download_sessions[original_lookup_code] = set()
-    active_download_sessions[original_lookup_code].add(session_id)
-    logger.info(f"开始下载会话: lookup_code={lookup_code}, session_id={session_id}, active_count={len(active_download_sessions[original_lookup_code])}")
+    logger.info(f"生成下载会话ID: lookup_code={lookup_code}, session_id={session_id}, user_id={user_id}")
     
     # 获取加密后的密钥
-    # 使用原始的查找码作为键，支持多个 lookup_code 共享同一个加密密钥缓存
-    logger.info(f"查找加密密钥: lookup_code={lookup_code}, original_lookup_code={original_lookup_code}")
-    logger.info(f"加密密钥缓存键: {list(encrypted_key_cache.keys())}")
+    # 方案2：直接使用 lookup_code 查找加密密钥（每个取件码有自己的加密密钥）
+    logger.info(f"查找加密密钥: lookup_code={lookup_code}, original_lookup_code={original_lookup_code}, user_id={user_id}")
     
-    if original_lookup_code not in encrypted_key_cache:
-        logger.warning(f"加密密钥不存在: original_lookup_code={original_lookup_code}, 缓存键={list(encrypted_key_cache.keys())}")
-        return not_found_response(msg="加密密钥不存在，可能尚未上传完成")
+    # 直接使用 lookup_code 查找加密密钥（每个取件码有自己的加密密钥）
+    encrypted_key = None
     
-    encrypted_key = encrypted_key_cache[original_lookup_code]
-    logger.info(f"✓ 找到加密密钥: lookup_code={lookup_code}, key_length={len(encrypted_key)}")
+    # 先检查 lookup_code 是否存在（尝试使用用户ID）
+    key_exists = encrypted_key_cache.exists(lookup_code, user_id)
+    logger.info(f"检查 lookup_code 是否存在: lookup_code={lookup_code}, user_id={user_id}, exists={key_exists}")
+    
+    if key_exists:
+        encrypted_key = encrypted_key_cache.get(lookup_code, user_id)
+        if encrypted_key:
+            logger.info(f"✓ 使用 lookup_code 找到加密密钥: lookup_code={lookup_code}, user_id={user_id}, key_length={len(encrypted_key)}")
+        else:
+            logger.warning(f"lookup_code 存在但密钥为 None: lookup_code={lookup_code}, user_id={user_id}")
+    else:
+        # 如果找不到，尝试不使用用户ID（向后兼容，可能旧数据没有用户ID）
+        if user_id is not None:
+            logger.info(f"尝试不使用用户ID查找: lookup_code={lookup_code}")
+            key_exists = encrypted_key_cache.exists(lookup_code, None)
+            if key_exists:
+                encrypted_key = encrypted_key_cache.get(lookup_code, None)
+                if encrypted_key:
+                    logger.warning(f"使用向后兼容方式找到密钥: lookup_code={lookup_code}, key_length={len(encrypted_key)}")
+                    # 复制到用户ID对应的键
+                    expire_at = ensure_aware_datetime(pickup_code.expire_at)
+                    encrypted_key_cache.set(lookup_code, encrypted_key, user_id, expire_at)
+        
+        # 如果还是找不到，尝试使用 original_lookup_code（向后兼容）
+        if encrypted_key is None:
+            logger.info(f"尝试使用 original_lookup_code 查找: original_lookup_code={original_lookup_code}, user_id={user_id}")
+            if encrypted_key_cache.exists(original_lookup_code, user_id):
+                encrypted_key = encrypted_key_cache.get(original_lookup_code, user_id)
+                if encrypted_key:
+                    logger.warning(f"使用 original_lookup_code 找到密钥（向后兼容）: lookup_code={lookup_code}, original_lookup_code={original_lookup_code}, user_id={user_id}, key_length={len(encrypted_key)}")
+                    # 同时存储到 lookup_code，确保后续可以直接使用 lookup_code 查找
+                    expire_at = ensure_aware_datetime(pickup_code.expire_at)
+                    encrypted_key_cache.set(lookup_code, encrypted_key, user_id, expire_at)
+                    logger.info(f"已将密钥复制到 lookup_code: {lookup_code}")
+        
+        if encrypted_key is None:
+            logger.warning(f"加密密钥不存在: lookup_code={lookup_code}, original_lookup_code={original_lookup_code}, user_id={user_id}")
+            # 返回 404 响应，确保 HTTP 状态码正确
+            return JSONResponse(
+                status_code=404,
+                content=not_found_response(msg="加密密钥不存在，可能尚未上传完成")
+            )
+    
+    # 最终检查
+    if encrypted_key is None:
+        logger.error(f"最终检查失败: encrypted_key 为 None, lookup_code={lookup_code}")
+        return JSONResponse(
+            status_code=404,
+            content=not_found_response(msg="加密密钥不存在，可能尚未上传完成")
+        )
+    
+    # 确保 encrypted_key 不为 None
+    if encrypted_key is None:
+        logger.error(f"加密密钥为 None: lookup_code={lookup_code}, original_lookup_code={original_lookup_code}")
+        return JSONResponse(
+            status_code=500,
+            content=error_response(500, "服务器内部错误：加密密钥获取失败")
+        )
+    
+    # 检查加密密钥格式（应该是 Base64 字符串）
+    logger.info(f"返回加密密钥: lookup_code={lookup_code}, key_length={len(encrypted_key)}, key_type={type(encrypted_key).__name__}")
+    if isinstance(encrypted_key, str):
+        # 检查是否是有效的 Base64 字符串（不应该以引号开头/结尾，这是 JSON 序列化的特征）
+        if encrypted_key.startswith('"') and encrypted_key.endswith('"'):
+            logger.warning(f"警告: 加密密钥被 JSON 引号包装，可能是序列化问题: {encrypted_key[:50]}...")
+            # 尝试去除引号
+            encrypted_key = encrypted_key.strip('"')
+        logger.info(f"加密密钥前50个字符: {encrypted_key[:50] if len(encrypted_key) > 50 else encrypted_key}")
+    else:
+        logger.warning(f"警告: 加密密钥不是字符串类型: {type(encrypted_key)}")
     
     return success_response(data={
         "encryptedKey": encrypted_key,
@@ -766,21 +477,29 @@ async def check_chunks(
     # 提取查找码（前6位）用于缓存键
     lookup_code = code
     
+    # 获取用户ID（用于缓存隔离）
+    user_id = current_user.id if current_user else None
+    
     # 检查是否存在映射，如果存在则使用原始的 lookup_code 访问缓存
-    original_lookup_code = get_original_lookup_code(lookup_code)
+    original_lookup_code = get_original_lookup_code(lookup_code, db)
     
     # 检查文件块是否存在
     existing_chunks = []
     missing_chunks = []
     
-    if original_lookup_code in chunk_cache:
+    if chunk_cache.exists(original_lookup_code, user_id):
+        chunks = chunk_cache.get(original_lookup_code, user_id)
         for i in range(total_chunks):
-            if i in chunk_cache[original_lookup_code]:
-                chunk = chunk_cache[original_lookup_code][i]
+            if i in chunks:
+                chunk = chunks[i]
                 # 检查是否过期（使用取件码的过期时间，绝对时间）
                 pickup_expire_at = chunk.get('pickup_expire_at') or chunk.get('expires_at')
-                if pickup_expire_at and datetime.utcnow() < pickup_expire_at:
-                    existing_chunks.append(i)
+                if pickup_expire_at:
+                    pickup_expire_at = ensure_aware_datetime(pickup_expire_at)
+                    if DatetimeUtil.now() < DatetimeUtil.ensure_aware(pickup_expire_at):
+                        existing_chunks.append(i)
+                    else:
+                        missing_chunks.append(i)
                 else:
                     missing_chunks.append(i)
             else:
@@ -851,15 +570,30 @@ async def get_file_info(
     # code 就是查找码（6位），直接用作缓存键
     lookup_code = code
     
+    # 获取用户ID（用于缓存隔离）
+    # 从数据库获取文件的上传者ID
+    user_id = None
+    try:
+        from app.models.file import File
+        file_record = db.query(File).filter(File.id == pickup_code.file_id).first()
+        if file_record and file_record.uploader_id:
+            user_id = file_record.uploader_id
+    except Exception as e:
+        logger.debug(f"无法获取上传者ID: {e}")
+    
     # 检查是否存在映射，如果存在则使用原始的 lookup_code 访问缓存
-    original_lookup_code = get_original_lookup_code(lookup_code)
+    original_lookup_code = get_original_lookup_code(lookup_code, db)
     
     # 获取文件信息
     # 使用原始的查找码作为键，支持多个 lookup_code 共享同一个文件信息缓存
-    if original_lookup_code not in file_info_cache:
-        return not_found_response(msg="文件信息不存在，可能尚未上传完成")
-    
-    file_info = file_info_cache[original_lookup_code]
+    if not file_info_cache.exists(original_lookup_code, user_id):
+        # 尝试向后兼容：不使用用户ID
+        if user_id is not None and file_info_cache.exists(original_lookup_code, None):
+            file_info = file_info_cache.get(original_lookup_code, None)
+        else:
+            return not_found_response(msg="文件信息不存在，可能尚未上传完成")
+    else:
+        file_info = file_info_cache.get(original_lookup_code, user_id)
     
     return success_response(data={
         "fileName": file_info['fileName'],
@@ -889,88 +623,54 @@ async def download_chunk(
     注意：如果提供了session_id，会验证是否是已开始的下载会话
     如果是已开始的下载会话，允许继续下载（即使达到上限）
     """
-    # 验证取件码（服务器只接收6位查找码）
-    if not validate_pickup_code(code):
-        return bad_request_response(msg="取件码格式错误，必须为6位大写字母或数字")
+    # 调用服务层处理业务逻辑
+    return await download_chunk_service(
+        code=code,
+        chunk_index=chunk_index,
+        session_id=session_id,
+        db=db
+    )
+
+
+@router.post("/codes/{code}/download-chunks")
+async def download_chunks_batch(
+    code: str,
+    request: DownloadChunksRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    批量下载文件块（优化性能）
     
-    # 使用查找码查询取件码（服务器只接收6位查找码，不接触后6位密钥码）
-    pickup_code = get_pickup_code_by_lookup(db, code)
-    if not pickup_code:
-        return not_found_response(msg=f"取件码不存在")
+    请求体格式:
+    {
+        "chunkIndices": [0, 1, 2, ...],  # 要下载的块索引列表
+        "sessionId": "..."  # 可选的会话ID
+    }
     
-    # 如果提供了session_id，验证是否是已开始的下载会话
-    # 如果是已开始的下载会话，允许继续下载（不检查使用次数限制）
-    lookup_code = code
-    original_lookup_code = get_original_lookup_code(lookup_code)
-    
-    if session_id:
-        # 验证会话ID是否有效
-        if original_lookup_code in active_download_sessions:
-            if session_id not in active_download_sessions[original_lookup_code]:
-                # 会话ID无效，可能是旧的会话或无效的会话
-                logger.warning(f"无效的下载会话ID: lookup_code={lookup_code}, session_id={session_id}")
-                # 不拒绝，允许继续（可能是旧的实现没有session_id）
-        # 如果是有效的会话，允许继续下载（不检查使用次数限制）
-    else:
-        # 没有提供session_id，检查使用次数限制（新的下载请求）
-        used_count = pickup_code.used_count or 0
-        limit_count = pickup_code.limit_count or 3
-        active_count = len(active_download_sessions.get(original_lookup_code, set()))
-        total_usage = used_count + active_count
-        
-        if limit_count != 999 and total_usage >= limit_count:
-            return bad_request_response(
-                msg="取件码已达到使用上限，无法继续使用",
-                data={
-                    "code": "LIMIT_REACHED",
-                    "usedCount": used_count,
-                    "activeCount": active_count,
-                    "limitCount": limit_count,
-                    "remaining": 0
-                }
-            )
-    
-    # 清理过期块
-    cleanup_expired_chunks()
-    
-    # 提取查找码（前6位）用于缓存键
-    # code 就是查找码（6位），直接用作缓存键
-    lookup_code = code
-    
-    # 检查是否存在映射，如果存在则使用原始的 lookup_code 访问缓存
-    original_lookup_code = get_original_lookup_code(lookup_code)
-    
-    # 从内存缓存读取
-    # 使用原始的查找码作为键，支持多个 lookup_code 共享同一个文件块缓存
-    if original_lookup_code not in chunk_cache or chunk_index not in chunk_cache[original_lookup_code]:
-        return not_found_response(msg="文件块不存在或已过期")
-    
-    chunk_info = chunk_cache[original_lookup_code][chunk_index]
-    
-    # 检查是否过期（使用取件码的过期时间，绝对时间）
-    pickup_expire_at = chunk_info.get('pickup_expire_at') or chunk_info.get('expires_at')
-    if pickup_expire_at and datetime.utcnow() > pickup_expire_at:
-        # 自动删除过期数据
-        del chunk_cache[original_lookup_code][chunk_index]
-        return not_found_response(msg="文件块已过期")
-    
-    # 返回加密后的数据块（流式响应）
-    return StreamingResponse(
-        io.BytesIO(chunk_info['data']),
-        media_type="application/octet-stream",
-        headers={
-            "X-Chunk-Index": str(chunk_index),
-            "X-Chunk-Hash": chunk_info['hash'],
-            "X-Encrypted": "true",  # 标识数据已加密
-            "Content-Disposition": f"attachment; filename=chunk_{chunk_index}.encrypted"
-        }
+    返回格式:
+    {
+        "chunks": {
+            "0": {"data": base64_encoded_data, "hash": "...", ...},
+            "1": {"data": base64_encoded_data, "hash": "...", ...},
+            ...
+        },
+        "missing": [5, 10],  # 缺失的块索引（如果存在）
+        "expired": [3]  # 过期的块索引（如果存在）
+    }
+    """
+    # 调用服务层处理业务逻辑
+    return await download_chunks_batch_service(
+        code=code,
+        request=request.dict(),
+        session_id=request.sessionId,
+        db=db
     )
 
 
 @router.post("/codes/{code}/download-complete")
 async def download_complete(
     code: str,
-    session_id: Optional[str] = Body(None, description="下载会话ID（从获取加密密钥接口返回）"),
+    request: DownloadCompleteRequest,
     db: Session = Depends(get_db)
 ):
     """
@@ -982,79 +682,11 @@ async def download_complete(
     - 如果达到上限，更新状态为completed
     - 不删除文件块（可能还有其他接收者需要下载）
     """
-    # 验证取件码（服务器只接收6位查找码）
-    if not validate_pickup_code(code):
-        return bad_request_response(msg="取件码格式错误，必须为6位大写字母或数字")
-    
-    # 使用查找码查询取件码（服务器只接收6位查找码，不接触后6位密钥码）
-    pickup_code = get_pickup_code_by_lookup(db, code)
-    if not pickup_code:
-        return not_found_response(msg=f"取件码不存在")
-    
-    # 检查并更新过期状态
-    is_expired = check_and_update_expired_pickup_code(pickup_code, db)
-    if is_expired or pickup_code.status == "expired":
-        return bad_request_response(
-            msg="取件码已过期，无法使用",
-            data={"code": "EXPIRED", "status": "expired"}
-        )
-    
-    # 清除下载会话记录（如果提供了session_id）
-    lookup_code = code
-    original_lookup_code = get_original_lookup_code(lookup_code)
-    if session_id and original_lookup_code in active_download_sessions:
-        if session_id in active_download_sessions[original_lookup_code]:
-            active_download_sessions[original_lookup_code].remove(session_id)
-            logger.info(f"清除下载会话: lookup_code={lookup_code}, session_id={session_id}, 剩余活跃会话={len(active_download_sessions[original_lookup_code])}")
-            # 如果集合为空，删除键
-            if not active_download_sessions[original_lookup_code]:
-                del active_download_sessions[original_lookup_code]
-    
-    # 获取当前使用次数和限制
-    used_count = pickup_code.used_count or 0
-    limit_count = pickup_code.limit_count or 3
-    
-    # 检查是否已达到上限（999表示无限）
-    if limit_count != 999 and used_count >= limit_count:
-        # 已达到上限，更新状态为completed
-        pickup_code.status = "completed"
-        pickup_code.updated_at = datetime.utcnow()
-        db.commit()
-        return bad_request_response(
-            msg="取件码已达到使用上限",
-            data={
-                "code": "LIMIT_REACHED",
-                "usedCount": used_count,
-                "limitCount": limit_count,
-                "remaining": 0,
-                "status": "completed"
-            }
-        )
-    
-    # 增加使用次数
-    pickup_code.used_count = used_count + 1
-    pickup_code.updated_at = datetime.utcnow()
-    
-    # 检查是否达到上限（增加后）
-    new_used_count = pickup_code.used_count
-    if limit_count != 999 and new_used_count >= limit_count:
-        # 达到上限，更新状态为completed
-        pickup_code.status = "completed"
-    
-    db.commit()
-    db.refresh(pickup_code)
-    
-    # 注意：这里不删除文件块，因为可能还有其他接收者需要下载
-    # 文件块会在过期后自动清理
-    
-    return success_response(
-        msg="下载完成通知已接收，使用次数已更新",
-        data={
-            "usedCount": pickup_code.used_count,
-            "limitCount": limit_count,
-            "remaining": 999 if limit_count == 999 else (limit_count - pickup_code.used_count),
-            "status": pickup_code.status
-        }
+    # 调用服务层处理业务逻辑
+    return await download_complete_service(
+        code=code,
+        session_id=request.session_id,
+        db=db
     )
 
 

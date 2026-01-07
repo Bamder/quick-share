@@ -6,6 +6,7 @@
 
 const CACHE_PREFIX = 'quick-share-key-cache-';
 const PICKUP_CODE_CACHE_PREFIX = 'quick-share-pickup-code-cache-';
+const IDENTIFIER_CODE_CACHE_PREFIX = 'quick-share-identifier-code-cache-';
 const CACHE_EXPIRY_HOURS = 24 * 7; // 7天过期
 
 /**
@@ -111,7 +112,7 @@ export function cleanupExpiredKeys() {
         for (let i = localStorage.length - 1; i >= 0; i--) {
             const key = localStorage.key(i);
             
-            if (key && (key.startsWith(CACHE_PREFIX) || key.startsWith(PICKUP_CODE_CACHE_PREFIX))) {
+            if (key && (key.startsWith(CACHE_PREFIX) || key.startsWith(PICKUP_CODE_CACHE_PREFIX) || key.startsWith(IDENTIFIER_CODE_CACHE_PREFIX))) {
                 try {
                     const cachedData = JSON.parse(localStorage.getItem(key));
                     
@@ -237,6 +238,87 @@ export function removePickupCodeFromCache(fileHash) {
         console.log(`[KeyCache] 取件码已删除: ${fileHash.substring(0, 16)}...`);
     } catch (error) {
         console.error('[KeyCache] 删除取件码失败:', error);
+    }
+}
+
+/**
+ * 存储标识码到缓存（以文件哈希为键）
+ * @param {string} fileHash - 文件哈希
+ * @param {string} identifierCode - 6位标识码
+ * @param {number} expireHours - 过期时间（小时）
+ */
+export function storeIdentifierCodeInCache(fileHash, identifierCode, expireHours = CACHE_EXPIRY_HOURS) {
+    if (!fileHash || !identifierCode) {
+        console.warn('[KeyCache] 无效的标识码缓存参数');
+        return;
+    }
+
+    try {
+        const expireAt = Date.now() + (expireHours * 60 * 60 * 1000);
+        const cacheData = {
+            identifierCode: identifierCode,
+            expireAt: expireAt,
+            createdAt: Date.now()
+        };
+
+        const cacheKey = `${IDENTIFIER_CODE_CACHE_PREFIX}${fileHash}`;
+        localStorage.setItem(cacheKey, JSON.stringify(cacheData));
+        console.log(`[KeyCache] 标识码已缓存: ${fileHash.substring(0, 16)}... -> ${identifierCode} (过期时间: ${new Date(expireAt).toLocaleString()})`);
+    } catch (error) {
+        console.error('[KeyCache] 存储标识码失败:', error);
+    }
+}
+
+/**
+ * 从缓存获取标识码
+ * @param {string} fileHash - 文件哈希
+ * @returns {string|null} 6位标识码，如果不存在或已过期则返回null
+ */
+export function getIdentifierCodeFromCache(fileHash) {
+    if (!fileHash) {
+        return null;
+    }
+
+    try {
+        const cacheKey = `${IDENTIFIER_CODE_CACHE_PREFIX}${fileHash}`;
+        const cachedData = localStorage.getItem(cacheKey);
+        
+        if (!cachedData) {
+            return null;
+        }
+
+        const cacheData = JSON.parse(cachedData);
+        
+        // 检查是否过期（使用绝对时间）
+        if (Date.now() > cacheData.expireAt) {
+            console.log(`[KeyCache] 标识码已过期: ${fileHash.substring(0, 16)}...`);
+            localStorage.removeItem(cacheKey);
+            return null;
+        }
+
+        console.log(`[KeyCache] 从缓存获取标识码: ${fileHash.substring(0, 16)}... -> ${cacheData.identifierCode}`);
+        return cacheData.identifierCode;
+    } catch (error) {
+        console.error('[KeyCache] 获取标识码失败:', error);
+        return null;
+    }
+}
+
+/**
+ * 从缓存删除标识码
+ * @param {string} fileHash - 文件哈希
+ */
+export function removeIdentifierCodeFromCache(fileHash) {
+    if (!fileHash) {
+        return;
+    }
+
+    try {
+        const cacheKey = `${IDENTIFIER_CODE_CACHE_PREFIX}${fileHash}`;
+        localStorage.removeItem(cacheKey);
+        console.log(`[KeyCache] 标识码已删除: ${fileHash.substring(0, 16)}...`);
+    } catch (error) {
+        console.error('[KeyCache] 删除标识码失败:', error);
     }
 }
 

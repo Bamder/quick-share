@@ -2,9 +2,23 @@
 chcp 65001 >nul
 setlocal enabledelayedexpansion
 
-:: 获取脚本所在目录和项目根目录
+:: 获取脚本所在目录并计算项目根目录
 set "SCRIPT_DIR=%~dp0"
-set "PROJECT_ROOT=%SCRIPT_DIR%..\..\..\"
+set "PROJECT_ROOT=%SCRIPT_DIR%..\..\.."
+
+:: 移除末尾的反斜杠，确保路径正确
+if "%PROJECT_ROOT:~-1%"=="\" set "PROJECT_ROOT=%PROJECT_ROOT:~0,-1%"
+
+echo 脚本目录: %SCRIPT_DIR%
+echo 项目根目录: %PROJECT_ROOT%
+echo.
+
+:: 检查项目根目录是否存在
+if not exist "%PROJECT_ROOT%" (
+    echo [错误] 项目根目录不存在: %PROJECT_ROOT%
+    pause
+    exit /b 1
+)
 cd /d "%PROJECT_ROOT%"
 
 echo ========================================
