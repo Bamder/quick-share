@@ -138,7 +138,8 @@ export function logout() {
  */
 export async function verifyToken(token) {
     try {
-        const response = await apiRequest('GET', '/auth/verify', {}, {
+        // GET 请求不应该有 body，传递 null
+        const response = await apiRequest('GET', '/auth/verify', null, {
             'Authorization': `Bearer ${token}`
         });
         // 后端返回格式: {code: 200, msg: "success", data: {user: {...}}}

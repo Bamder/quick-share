@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "your-secret-key-here")
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+
+    # 去重指纹 pepper（服务器端秘密）
+    # - 用途：从 (user_id + 明文文件哈希) 派生 dedupe fingerprint
+    # - 建议：生产环境务必配置为随机高熵值，并妥善保管（不要泄露到日志/前端）
+    # - 说明：未配置时将回退使用 JWT_SECRET_KEY（仍是服务器端秘密）
+    DEDUPE_PEPPER: str = os.getenv("DEDUPE_PEPPER", "")
     
     class Config:
         env_file = ".env"

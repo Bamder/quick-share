@@ -26,6 +26,9 @@ import {
   storePickupCodeInCache,
   getPickupCodeFromCache,
   removePickupCodeFromCache,
+  storeIdentifierCodeInCache,
+  getIdentifierCodeFromCache,
+  removeIdentifierCodeFromCache,
 } from "/static/utils/key-cache.js";
 
 // 导入服务（使用导出的单例实例）
@@ -443,9 +446,11 @@ function initEventListeners() {
 
         try {
           await invalidateFileRecord(CONFIG.fileId);
-          // 删除缓存的密钥
+          // 删除缓存的密钥、取件码和标识码
           if (CONFIG.fileHash) {
             removeKeyFromCache(CONFIG.fileHash);
+            removePickupCodeFromCache(CONFIG.fileHash);
+            removeIdentifierCodeFromCache(CONFIG.fileHash);
           }
           showMessage("文件记录已作废，所有取件码已失效", "success");
           // 隐藏作废按钮
@@ -559,7 +564,7 @@ function handleFile(file) {
  * 3. 创建取件码（后端API）
  * 4. 上传文件（使用已创建的取件码）
  */
-async function generatePickupCodeHandler() {
+async function generatePickupCodeHandler(skipFileExistCheck = false, reuseFileCache = false, identifierCode = null) {
   if (!CONFIG.localFile) {
     showMessage("请先选择文件", "error");
     return;
@@ -640,6 +645,15 @@ async function generatePickupCodeHandler() {
       expireHours: expireHoursFinal, // 使用计算好的小时数（支持小数）
     };
 
+    // 如果是复用文件缓存的情况，添加相关参数
+    if (reuseFileCache) {
+      requestData.reuseFileCache = true;
+      if (identifierCode) {
+        requestData.identifierCode = identifierCode;
+      }
+      console.log("设置复用文件缓存参数:", { reuseFileCache: true, identifierCode });
+    }
+
     // 验证数据类型
     console.log("请求数据类型验证:", {
       size: {
@@ -712,7 +726,7 @@ async function generatePickupCodeHandler() {
 
       // 处理文件已存在的情况
       // 检查错误码是否为 FILE_ALREADY_EXISTS
-      if (response.status === 400) {
+      if (response.status === 400 && !skipFileExistCheck) {
         // 检查 errorData.data.code 或 errorData.code
         const errorCode = errorData.data?.code || errorData.code;
         console.log(
@@ -734,34 +748,63 @@ async function generatePickupCodeHandler() {
         console.log("是否匹配文件已存在错误:", isFileExists);
 
         if (isFileExists) {
-          // 检查是否有密钥缓存和取件码缓存
-          const hasCachedKey = requestData.hash
+          // 使用后端返回的缓存状态（更准确，因为后端知道服务器端的缓存状态）
+          const hasCachedChunks = errorData.data?.hasCachedChunks || false;
+          const hasCachedKey = errorData.data?.hasCachedKey || false;
+          const existingLookupCode = errorData.data?.existingLookupCode || null;
+          const identifierCode = errorData.data?.identifierCode || null;  // 获取标识码
+          
+          // 检查本地缓存（用于判断是否可以复用）
+          // 前端原始密钥丢失 → 所有东西重新上传
+          // 前端原始密钥存在，但后端文件缓存丢失 → 所有东西重新上传
+          // 前端原始密钥存在，且后端文件缓存存在 → 可以复用文件缓存，需要对原始密钥进行加密
+          const localCachedKey = requestData.hash
             ? getKeyFromCache(requestData.hash) !== null
             : false;
           const oldPickupCode = requestData.hash
             ? getPickupCodeFromCache(requestData.hash)
             : null;
-          console.log("密钥缓存检查:", {
-            hasCachedKey,
-            fileHash: requestData.hash
-              ? requestData.hash.substring(0, 16) + "..."
+          const cachedIdentifierCode = requestData.hash
+            ? getIdentifierCodeFromCache(requestData.hash)
+            : null;
+          
+          // 确定使用的标识码：优先使用后端返回的，如果没有则使用本地缓存的
+          const finalIdentifierCode = identifierCode || cachedIdentifierCode;
+          
+          console.log("缓存状态检查:", {
+            hasCachedChunks, // 服务器端文件块缓存
+            hasCachedKey, // 服务器端密钥缓存
+            localCachedKey, // 本地密钥缓存
+            identifierCode: finalIdentifierCode || null,  // 标识码
+            existingLookupCode: existingLookupCode
+              ? existingLookupCode.substring(0, 6) + "****"
               : null,
             oldPickupCode: oldPickupCode
               ? oldPickupCode.substring(0, 6) + "****"
               : null,
           });
 
+          // 根据用户的设计逻辑：
+          // 1. 前端原始密钥丢失 → 所有东西重新上传
+          // 2. 前端原始密钥存在，但后端文件缓存丢失 → 所有东西重新上传
+          // 3. 前端原始密钥存在，且后端文件缓存存在 → 可以复用文件缓存，需要对原始密钥进行加密
           let dialogTitle, dialogMessage, confirmText;
-          if (hasCachedKey && oldPickupCode) {
-            // 有缓存密钥和旧取件码，可以复用旧密钥重新生成取件码
+          
+          if (!localCachedKey) {
+            // 情况1：前端原始密钥丢失 → 所有东西重新上传
             dialogTitle = "文件已存在";
-            dialogMessage = `该文件已创建过未过期的取件码（旧取件码: ${oldPickupCode}）。\n\n选择操作：\n• 重新生成（复用旧文件密钥）：无需重新上传文件，旧的取件码仍然可以下载\n• 取消：不进行任何操作`;
-            confirmText = "重新生成（复用旧文件密钥）";
+            dialogMessage = `该文件已存在相关取件码，但本地密钥缓存已丢失。\n\n选择操作：\n• 重新生成（完整上传）：需要重新上传完整的文件和加密密钥，生成新的取件码\n• 取消：不进行任何操作\n\n注意：选择"重新生成"后，将生成新的取件码，其他取件码不受影响`;
+            confirmText = "重新生成（完整上传）";
+          } else if (!hasCachedChunks) {
+            // 情况2：前端原始密钥存在，但后端文件缓存丢失 → 所有东西重新上传
+            dialogTitle = "文件已存在";
+            dialogMessage = `该文件已存在相关取件码，但服务器端文件块缓存已丢失。\n\n选择操作：\n• 重新生成（完整上传）：需要重新上传完整的文件和加密密钥，生成新的取件码\n• 取消：不进行任何操作\n\n注意：选择"重新生成"后，将生成新的取件码，其他取件码不受影响`;
+            confirmText = "重新生成（完整上传）";
           } else {
-            // 没有缓存密钥或旧取件码，需要作废旧文件记录
-            dialogTitle = "文件已存在但密钥丢失";
-            dialogMessage = `该文件已存在未过期的取件码，但本地缓存丢失旧文件密钥。\n\n选择操作：\n• 重新生成（生成全新取件码）：重新上传文件，旧的取件码将无法下载\n• 取消：不进行任何操作`;
-            confirmText = "重新生成（生成全新取件码）";
+            // 情况3：前端原始密钥存在，且后端文件缓存存在 → 可以复用文件缓存
+            dialogTitle = "文件已存在";
+            dialogMessage = `该文件已存在相关取件码，且服务器端文件块缓存存在。\n\n选择操作：\n• 重新生成（复用文件块）：无需重新上传文件块，只需上传加密密钥，生成新的取件码\n• 取消：不进行任何操作\n\n注意：选择"重新生成"后，所有取件码都可以正常下载文件`;
+            confirmText = "重新生成（复用文件块）";
           }
 
           // 显示确认弹窗，让用户决定是否重新生成
@@ -779,24 +822,50 @@ async function generatePickupCodeHandler() {
             const fileId = errorData.data?.fileId || errorData.fileId;
             if (fileId) {
               try {
-                if (hasCachedKey && oldPickupCode) {
-                  // 有缓存密钥和旧取件码：复用旧密钥，只需作废旧取件码，保留文件记录和密钥
-                  console.log("复用旧密钥重新生成取件码, fileId:", fileId);
-                  await invalidateFileRecord(fileId);
-                  // 注意：不删除缓存的密钥和取件码，这样上传时会自动使用旧密钥
+                if (localCachedKey && hasCachedChunks) {
+                  // 情况3：前端原始密钥存在，且后端文件缓存存在 → 可以复用文件缓存
+                  console.log("复用文件块缓存重新生成取件码, fileId:", fileId, "identifierCode:", finalIdentifierCode);
+
+                  // 检查标识码是否存在（复用文件块必须有标识码）
+                  if (!finalIdentifierCode) {
+                    throw new Error("无法获取标识码，无法复用文件块缓存");
+                  }
+
+                  // 存储标识码（如果存在）
+                  if (requestData.hash) {
+                    storeIdentifierCodeInCache(requestData.hash, finalIdentifierCode, CONFIG.expireHours || 24);
+                    console.log("已存储标识码到本地缓存:", finalIdentifierCode);
+                  }
+
+                  // 注意：复用文件块的情况下，不需要作废旧文件记录
+                  // 只需要告诉后端这是复用文件缓存的情况
                   console.log(
-                    "重新调用创建取件码（将复用缓存的密钥，通过映射表复用文件块，无需重新上传）"
+                    "复用文件块缓存，设置 reuseFileCache 参数"
                   );
-                  return await generatePickupCodeHandler();
+
+                  // 修改请求数据，添加复用标志
+                  const originalRequestData = { ...requestData };
+                  requestData.reuseFileCache = true;
+                  requestData.identifierCode = finalIdentifierCode;  // 明确指定要复用的标识码
+
+                  // 重新调用创建取件码（将复用文件块缓存，只需上传加密密钥）
+                  try {
+                    return await generatePickupCodeHandler(true, true, finalIdentifierCode);
+                  } finally {
+                    // 恢复原始请求数据
+                    Object.assign(requestData, originalRequestData);
+                  }
                 } else {
-                  // 没有缓存密钥或旧取件码：作废旧文件记录，生成新密钥
+                  // 情况1或2：前端原始密钥丢失，或后端文件缓存丢失 → 所有东西重新上传
                   console.log("作废旧文件记录并生成新密钥, fileId:", fileId);
                   await invalidateFileRecord(fileId);
-                  // 删除缓存的密钥和取件码（如果存在）
+                  // 删除缓存的密钥、取件码和标识码（如果存在）
                   if (requestData.hash) {
                     removeKeyFromCache(requestData.hash);
                     removePickupCodeFromCache(requestData.hash);
+                    removeIdentifierCodeFromCache(requestData.hash);
                   }
+                  // 重新调用创建取件码（将生成新密钥，需要重新上传文件块）
                   console.log(
                     "重新调用创建取件码（将生成新密钥，需要重新上传文件块）"
                   );
@@ -867,17 +936,35 @@ async function generatePickupCodeHandler() {
         console.log("是否匹配文件已存在错误:", isFileExists);
 
         if (isFileExists) {
-          // 检查是否有密钥缓存和取件码缓存
-          const hasCachedKey = requestData.hash
+          // 使用后端返回的缓存状态（更准确，因为后端知道服务器端的缓存状态）
+          const hasCachedChunks = result.data?.hasCachedChunks || false;
+          const hasCachedKey = result.data?.hasCachedKey || false;
+          const existingLookupCode = result.data?.existingLookupCode || null;
+          const identifierCode = result.data?.identifierCode || null;  // 获取标识码
+
+          // 检查本地缓存（用于判断是否可以复用）
+          // 前端原始密钥丢失 → 所有东西重新上传
+          // 前端原始密钥存在，但后端文件缓存丢失 → 所有东西重新上传
+          // 前端原始密钥存在，且后端文件缓存存在 → 可以复用文件缓存，需要对原始密钥进行加密
+          const localCachedKey = requestData.hash
             ? getKeyFromCache(requestData.hash) !== null
             : false;
           const oldPickupCode = requestData.hash
             ? getPickupCodeFromCache(requestData.hash)
             : null;
-          console.log("密钥缓存检查:", {
-            hasCachedKey,
-            fileHash: requestData.hash
-              ? requestData.hash.substring(0, 16) + "..."
+          const cachedIdentifierCode = requestData.hash
+            ? getIdentifierCodeFromCache(requestData.hash)
+            : null;
+
+          // 确定使用的标识码：优先使用后端返回的，如果没有则使用本地缓存的
+          const finalIdentifierCode = identifierCode || cachedIdentifierCode;
+          
+          console.log("缓存状态检查:", {
+            hasCachedChunks, // 服务器端文件块缓存
+            hasCachedKey, // 服务器端密钥缓存
+            localCachedKey, // 本地密钥缓存
+            existingLookupCode: existingLookupCode
+              ? existingLookupCode.substring(0, 6) + "****"
               : null,
             oldPickupCode: oldPickupCode
               ? oldPickupCode.substring(0, 6) + "****"
@@ -885,17 +972,27 @@ async function generatePickupCodeHandler() {
           });
 
           let dialogTitle, dialogMessage, confirmText;
-          if (hasCachedKey && oldPickupCode) {
-            // 有缓存密钥和旧取件码，可以复用旧密钥重新生成取件码
-            // 注意：通过映射表机制，复用旧密钥时无需重新上传文件块
+          
+          // 根据三种情况显示不同的文本
+          // 情况1：前端原始密钥丢失 → 所有东西重新上传
+          // 情况2：前端原始密钥存在，但后端文件缓存丢失 → 所有东西重新上传
+          // 情况3：前端原始密钥存在，且后端文件缓存存在 → 可以复用文件缓存，只需上传加密密钥
+          
+          if (!localCachedKey) {
+            // 情况1：前端原始密钥丢失 → 所有东西重新上传
             dialogTitle = "文件已存在";
-            dialogMessage = `该文件已创建过未过期的取件码（旧取件码: ${oldPickupCode}）。\n\n选择操作：\n• 重新生成（复用旧文件密钥）：无需重新上传文件，旧的取件码仍然可以下载\n• 取消：不进行任何操作`;
-            confirmText = "重新生成（复用旧文件密钥）";
+            dialogMessage = `该文件已存在未过期的取件码（旧取件码: ${existingLookupCode || oldPickupCode || "未知"}）。\n\n选择操作：\n• 重新生成（完整上传）：需要重新上传完整的文件和加密密钥，生成新的取件码\n• 取消：不进行任何操作\n\n注意：选择"重新生成"后，旧的取件码将无法下载文件`;
+            confirmText = "重新生成（完整上传）";
+          } else if (!hasCachedChunks) {
+            // 情况2：前端原始密钥存在，但后端文件缓存丢失 → 所有东西重新上传
+            dialogTitle = "文件已存在";
+            dialogMessage = `该文件已存在未过期的取件码（旧取件码: ${existingLookupCode || oldPickupCode || "未知"}），但服务器端文件块缓存已丢失。\n\n选择操作：\n• 重新生成（完整上传）：需要重新上传完整的文件和加密密钥，生成新的取件码\n• 取消：不进行任何操作\n\n注意：选择"重新生成"后，旧的取件码将无法下载文件（所有缓存已丢失）`;
+            confirmText = "重新生成（完整上传）";
           } else {
-            // 没有缓存密钥或旧取件码，需要作废旧文件记录
-            dialogTitle = "文件已存在但密钥丢失";
-            dialogMessage = `该文件已存在未过期的取件码，但本地缓存丢失旧文件密钥。\n\n选择操作：\n• 重新生成（生成全新取件码）：重新上传文件，旧的取件码将无法下载\n• 取消：不进行任何操作`;
-            confirmText = "重新生成（生成全新取件码）";
+            // 情况3：前端原始密钥存在，且后端文件缓存存在 → 可以复用文件缓存，只需上传加密密钥
+            dialogTitle = "文件已存在";
+            dialogMessage = `该文件已存在未过期的取件码（旧取件码: ${existingLookupCode || oldPickupCode || "未知"}），且服务器端文件块缓存存在。\n\n选择操作：\n• 重新生成（复用文件块）：无需重新上传文件块，只需上传加密密钥，生成新的取件码\n• 取消：不进行任何操作\n\n注意：选择"重新生成"后，旧的取件码仍然可以正常下载文件`;
+            confirmText = "重新生成（复用文件块）";
           }
 
           // 显示确认弹窗，让用户决定是否重新生成
@@ -913,25 +1010,48 @@ async function generatePickupCodeHandler() {
             const fileId = result.data?.fileId || result.fileId;
             if (fileId) {
               try {
-                if (hasCachedKey && oldPickupCode) {
-                  // 有缓存密钥和旧取件码：复用旧密钥，只需作废旧取件码，保留文件记录和密钥
-                  // 注意：通过映射表机制，复用旧密钥时无需重新上传文件块
-                  console.log("复用旧密钥重新生成取件码, fileId:", fileId);
-                  await invalidateFileRecord(fileId);
-                  // 注意：不删除缓存的密钥和取件码，这样上传时会自动使用旧密钥
-                  // 重新调用创建取件码（会自动使用缓存的密钥，通过映射表复用文件块，无需重新上传）
+                if (localCachedKey && hasCachedChunks) {
+                  // 情况3：前端原始密钥存在，且后端文件缓存存在 → 可以复用文件缓存
+                  console.log("复用文件块缓存重新生成取件码, fileId:", fileId, "identifierCode:", finalIdentifierCode);
+
+                  // 检查标识码是否存在（复用文件块必须有标识码）
+                  if (!finalIdentifierCode) {
+                    throw new Error("无法获取标识码，无法复用文件块缓存");
+                  }
+
+                  // 存储标识码（如果存在）
+                  if (requestData.hash) {
+                    storeIdentifierCodeInCache(requestData.hash, finalIdentifierCode, CONFIG.expireHours || 24);
+                    console.log("已存储标识码到本地缓存:", finalIdentifierCode);
+                  }
+
+                  // 注意：复用文件块的情况下，不需要作废旧文件记录
+                  // 只需要告诉后端这是复用文件缓存的情况
                   console.log(
-                    "重新调用创建取件码（将复用缓存的密钥，通过映射表复用文件块，无需重新上传）"
+                    "复用文件块缓存，设置 reuseFileCache 参数"
                   );
-                  return await generatePickupCodeHandler();
+
+                  // 修改请求数据，添加复用标志
+                  const originalRequestData = { ...requestData };
+                  requestData.reuseFileCache = true;
+                  requestData.identifierCode = finalIdentifierCode;  // 明确指定要复用的标识码
+
+                  // 重新调用创建取件码（将复用文件块缓存，只需上传加密密钥）
+                  try {
+                    return await generatePickupCodeHandler(true, true, finalIdentifierCode);
+                  } finally {
+                    // 恢复原始请求数据
+                    Object.assign(requestData, originalRequestData);
+                  }
                 } else {
-                  // 没有缓存密钥或旧取件码：作废旧文件记录，生成新密钥
+                  // 情况1或2：前端原始密钥丢失，或后端文件缓存丢失 → 所有东西重新上传
                   console.log("作废旧文件记录并生成新密钥, fileId:", fileId);
                   await invalidateFileRecord(fileId);
-                  // 删除缓存的密钥和取件码（如果存在）
+                  // 删除缓存的密钥、取件码和标识码（如果存在）
                   if (requestData.hash) {
                     removeKeyFromCache(requestData.hash);
                     removePickupCodeFromCache(requestData.hash);
+                    removeIdentifierCodeFromCache(requestData.hash);
                   }
                   // 重新调用创建取件码（将生成新密钥，需要重新上传文件块）
                   console.log(
@@ -986,6 +1106,16 @@ async function generatePickupCodeHandler() {
         CONFIG.pickupCode,
         CONFIG.expireHours
       );
+    }
+    
+    // 缓存标识码（以文件哈希为键），用于通过标识码定位文件缓存
+    if (CONFIG.fileHash && result.data?.identifierCode) {
+      storeIdentifierCodeInCache(
+        CONFIG.fileHash,
+        result.data.identifierCode,
+        CONFIG.expireHours
+      );
+      console.log("已存储标识码到本地缓存:", result.data.identifierCode);
     }
 
     // 更新取件码显示并打开弹窗
@@ -1218,17 +1348,54 @@ async function initializeSenderService() {
       sendProgressPercent.textContent = "0%";
     }
 
+    // 跟踪验证状态
+    let isValidating = false;
+    let isValidationComplete = false;
+
     // 初始化服务
     senderService.init(`${CONFIG.API_BASE}/v1`, {
       onProgress: (progress, sent, total) => {
         console.log(`上传进度: ${progress.toFixed(1)}% (${sent}/${total})`);
 
+        // 在验证完成前，限制进度最高为99.9%
+        let displayProgress = progress;
+        if (!isValidationComplete) {
+          displayProgress = Math.min(progress, 99.9);
+        }
+
         // 更新上传进度条
         if (sendProgressFill) {
-          sendProgressFill.style.width = `${progress}%`;
+          sendProgressFill.style.width = `${displayProgress}%`;
         }
         if (sendProgressPercent) {
-          sendProgressPercent.textContent = `${progress.toFixed(1)}%`;
+          sendProgressPercent.textContent = `${displayProgress.toFixed(1)}%`;
+        }
+      },
+      onValidating: () => {
+        console.log("开始验证完整性");
+        isValidating = true;
+        isValidationComplete = false;
+        
+        // 进度条卡在99.9%
+        if (sendProgressFill) {
+          sendProgressFill.style.width = "99.9%";
+          sendProgressFill.classList.add("validating");
+          sendProgressFill.classList.remove("completed");
+        }
+        if (sendProgressPercent) {
+          sendProgressPercent.textContent = "99.9%";
+        }
+        
+        // 标记进度容器为验证状态
+        if (sendProgressBar) {
+          sendProgressBar.classList.add("validating");
+          sendProgressBar.classList.remove("completed");
+          const headerText = sendProgressBar.querySelector(
+            ".progress-header span:first-child"
+          );
+          if (headerText) {
+            headerText.textContent = "正在验证完整性";
+          }
         }
       },
       onComplete: () => {
@@ -1238,9 +1405,14 @@ async function initializeSenderService() {
         // 取件码必须在用户明确点击"生成取件码"按钮时创建
         // 上传完成只是通知用户文件已准备好，可以生成取件码进行分享
 
-        // 更新进度条到100%
+        // 标记验证完成，允许进度达到100%
+        isValidating = false;
+        isValidationComplete = true;
+
+        // 更新进度条到100%（只有在验证完成后才允许）
         if (sendProgressFill) {
           sendProgressFill.style.width = "100%";
+          sendProgressFill.classList.remove("validating");
           sendProgressFill.classList.add("completed");
         }
         if (sendProgressPercent) {
@@ -1249,6 +1421,7 @@ async function initializeSenderService() {
 
         // 标记进度容器为完成状态
         if (sendProgressBar) {
+          sendProgressBar.classList.remove("validating");
           sendProgressBar.classList.add("completed");
           const headerText = sendProgressBar.querySelector(
             ".progress-header span:first-child"
@@ -1270,6 +1443,24 @@ async function initializeSenderService() {
       },
       onError: (error) => {
         console.error("上传错误:", error);
+        
+        // 清除验证状态（如果存在）
+        isValidating = false;
+        isValidationComplete = false;
+        
+        if (sendProgressBar) {
+          sendProgressBar.classList.remove("validating");
+          const headerText = sendProgressBar.querySelector(
+            ".progress-header span:first-child"
+          );
+          if (headerText) {
+            headerText.textContent = "上传进度";
+          }
+        }
+        if (sendProgressFill) {
+          sendProgressFill.classList.remove("validating");
+        }
+        
         // 改进错误提示
         let errorMessage = error.message;
         if (errorMessage.includes("网络") || errorMessage.includes("fetch")) {
@@ -1278,6 +1469,8 @@ async function initializeSenderService() {
           errorMessage = "上传超时，请稍后重试";
         } else if (errorMessage.includes("加密")) {
           errorMessage = "文件加密失败，请刷新页面重试";
+        } else if (errorMessage.includes("验证完整性") || errorMessage.includes("不完整")) {
+          errorMessage = "文件上传不完整，请重新上传";
         }
         showMessage(`上传失败: ${errorMessage}`, "error");
       },
@@ -1955,7 +2148,7 @@ function clearUploadCompleteUI() {
   const sendProgressPercent = document.getElementById("sendProgressPercent");
 
   if (sendProgressBar) {
-    sendProgressBar.classList.remove("completed");
+    sendProgressBar.classList.remove("completed", "validating");
     const headerText = sendProgressBar.querySelector(
       ".progress-header span:first-child"
     );
@@ -1965,7 +2158,7 @@ function clearUploadCompleteUI() {
   }
 
   if (sendProgressFill) {
-    sendProgressFill.classList.remove("completed");
+    sendProgressFill.classList.remove("completed", "validating");
     sendProgressFill.style.width = "0%";
   }
 

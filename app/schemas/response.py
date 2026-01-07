@@ -47,3 +47,4 @@ class CreateCodeResponse(BaseModel):
     limitCount: int
     expireAt: datetime
     createdAt: datetime
+    identifierCode: Optional[str] = None  # 标识码（用于前端存储，通过标识码定位文件缓存）

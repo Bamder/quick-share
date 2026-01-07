@@ -282,12 +282,54 @@ if __name__ == "__main__":
         print()
     
     try:
+        import logging
+        import re
+        
+        # 配置日志过滤器，过滤频繁请求的日志
+        # 需要在 uvicorn 启动之前配置，并且要确保应用到所有相关的 logger
+        class AccessLogFilter(logging.Filter):
+            """过滤频繁请求的访问日志"""
+            # 需要过滤的路径模式（匹配完整的日志消息）
+            FILTERED_PATTERNS = [
+                r'/status',  # 状态查询接口
+                r'/health',  # 健康检查
+                r'/upload-chunk',  # 文件块上传接口
+                r'/download-chunk',  # 文件块下载接口
+            ]
+            
+            def filter(self, record):
+                # 检查日志消息是否包含被过滤的路径
+                # uvicorn 的访问日志格式类似: "192.168.43.160:63503 - "GET /api/v1/codes/G8QQ5P/status HTTP/1.1" 200 OK"
+                message = record.getMessage()
+                for pattern in self.FILTERED_PATTERNS:
+                    if re.search(pattern, message):
+                        return False  # 过滤掉这条日志
+                return True  # 保留其他日志
+        
+        # 提前配置日志过滤器（在 uvicorn 启动之前）
+        # 需要应用到所有 uvicorn 相关的 logger
+        access_filter = AccessLogFilter()
+        
+        # 配置 uvicorn.access logger
+        uvicorn_access_logger = logging.getLogger("uvicorn.access")
+        uvicorn_access_logger.addFilter(access_filter)
+        
+        # 也配置 uvicorn logger（以防万一）
+        uvicorn_logger = logging.getLogger("uvicorn")
+        if not any(isinstance(f, AccessLogFilter) for f in uvicorn_logger.filters):
+            uvicorn_logger.addFilter(access_filter)
+        
+        # 确保过滤器被正确添加
+        print("✓ 日志过滤器已配置：将过滤状态查询、上传/下载块等频繁请求的日志")
+        print()
+        
         uvicorn_config = {
             "app": "app.main:app",
             "host": "0.0.0.0",
             "port": 8000,
             "reload": True,
-            "log_level": "info"
+            "log_level": "info",
+            "access_log": True  # 保持访问日志开启，但通过过滤器过滤
         }
         
         if use_https:

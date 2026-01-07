@@ -29,6 +29,7 @@ class SenderService {
     this.onProgress = null;              // 发送进度
     this.onComplete = null;              // 发送完成
     this.onError = null;                 // 错误
+    this.onValidating = null;            // 验证完整性
     
     // 文件传输相关
     this.currentFile = null;             // 当前待发送文件
@@ -47,6 +48,7 @@ class SenderService {
     this.onProgress = callbacks.onProgress || null;
     this.onComplete = callbacks.onComplete || null;
     this.onError = callbacks.onError || null;
+    this.onValidating = callbacks.onValidating || null;
   }
 
   // ========== 服务器中转模式 ==========
@@ -310,6 +312,11 @@ class SenderService {
    */
   async notifyUploadComplete() {
     try {
+      // 通知开始验证完整性
+      if (this.onValidating) {
+        this.onValidating();
+      }
+      
       const response = await fetch(
         `${this.apiBase}/relay/codes/${this.lookupCode}/upload-complete`,
         {
@@ -327,13 +334,28 @@ class SenderService {
       );
 
       if (!response.ok) {
-        throw new Error(`通知上传完成失败: HTTP ${response.status}`);
+        // 尝试解析错误响应
+        let errorMsg = `验证完整性失败: HTTP ${response.status}`;
+        try {
+          const errorData = await response.json();
+          if (errorData.msg) {
+            errorMsg = errorData.msg;
+          }
+          // 如果是完整性验证失败，抛出错误让前端处理
+          if (errorData.data && errorData.data.code === 'INCOMPLETE_UPLOAD') {
+            throw new Error(errorMsg);
+          }
+        } catch (jsonError) {
+          // JSON 解析失败，使用默认错误信息
+        }
+        throw new Error(errorMsg);
       }
 
-      console.log('[Sender] ✓ 已通知服务器上传完成');
+      console.log('[Sender] ✓ 已通知服务器上传完成，验证通过');
     } catch (error) {
-      console.warn('[Sender] 通知上传完成失败:', error);
-      // 不抛出错误，因为文件已经上传完成
+      console.error('[Sender] 验证完整性失败:', error);
+      // 验证失败时抛出错误，让前端处理（清除验证状态、显示错误等）
+      throw error;
     }
   }
 

@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from .config import settings
 from .extensions import engine
+from .extensions import SessionLocal
 from contextlib import asynccontextmanager
 from app.models import Base
 import app.routes.health as health_router
@@ -14,15 +15,43 @@ import app.routes.auth as auth_router
 import logging
 import os
 import socket
+import asyncio
+import re
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+# 配置访问日志过滤器（过滤频繁请求的日志）
+class AccessLogFilter(logging.Filter):
+    """过滤频繁请求的访问日志"""
+    # 需要过滤的路径模式
+    FILTERED_PATTERNS = [
+        r'/status',  # 状态查询接口
+        r'/health',  # 健康检查
+        r'/upload-chunk',  # 文件块上传接口
+        r'/download-chunk',  # 文件块下载接口
+    ]
+    
+    def filter(self, record):
+        # 检查日志消息是否包含被过滤的路径
+        message = record.getMessage()
+        for pattern in self.FILTERED_PATTERNS:
+            if re.search(pattern, message):
+                return False  # 过滤掉这条日志
+        return True  # 保留其他日志
+
+# 应用启动后配置日志过滤器
+access_filter = AccessLogFilter()
+uvicorn_access_logger = logging.getLogger("uvicorn.access")
+uvicorn_access_logger.addFilter(access_filter)
+logger.info("访问日志过滤器已配置：将过滤状态查询、上传/下载块等频繁请求的日志")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     应用生命周期管理
-    - 启动时：创建数据库表（如果不存在）
-    - 关闭时：清理资源
+    - 启动时：创建数据库表（如果不存在）、启动后台任务
+    - 关闭时：清理资源、停止后台任务
     
     注意：数据库环境检查已在启动脚本中完成，这里假设环境已就绪
     """
@@ -61,7 +90,50 @@ async def lifespan(app: FastAPI):
             "请检查数据库服务状态和连接配置，然后重新启动应用。"
         ) from e
     
+    # 启动后台清理任务
+    async def periodic_cleanup():
+        """定期清理过期缓存的后台任务"""
+        cleanup_interval = 300  # 每5分钟清理一次
+        logger.info(f"启动后台清理任务，清理间隔: {cleanup_interval}秒")
+        
+        while True:
+            try:
+                await asyncio.sleep(cleanup_interval)
+                logger.debug("开始执行定时清理任务...")
+                
+                # 创建数据库会话
+                db = SessionLocal()
+                try:
+                    # 执行清理
+                    from app.services.cleanup_service import cleanup_expired_chunks
+                    cleanup_expired_chunks(db)
+                    logger.debug("定时清理任务完成")
+                except Exception as e:
+                    logger.error(f"定时清理任务失败: {e}", exc_info=True)
+                finally:
+                    db.close()
+                    
+            except asyncio.CancelledError:
+                logger.info("后台清理任务已取消")
+                break
+            except Exception as e:
+                logger.error(f"后台清理任务异常: {e}", exc_info=True)
+                # 继续运行，不要因为一次错误就停止
+    
+    # 启动后台任务
+    cleanup_task = asyncio.create_task(periodic_cleanup())
+    logger.info("✓ 后台清理任务已启动")
+    
     yield
+    
+    # 关闭时：取消后台任务
+    logger.info("正在停止后台清理任务...")
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
+    logger.info("✓ 后台清理任务已停止")
     
     # SQLAlchemy 会自动管理连接池
 
