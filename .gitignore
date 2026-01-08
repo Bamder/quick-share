@@ -9,6 +9,7 @@ alembic.ini
 
 # 虚拟环境（每个开发者自己创建）
 venv/
+venv-test/
 env/
 .venv/
 ENV/

@@ -46,13 +46,17 @@ def check_venv():
         print("=" * 60)
         print("")
         
+        # 在非交互式环境中自动继续
+        if not sys.stdin.isatty():
+            print("非交互式环境，自动继续...")
+            return False
         # 询问是否继续
         try:
             response = input("是否继续运行? (y/n): ").strip().lower()
             if response != 'y':
                 print("已取消")
                 sys.exit(0)
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, EOFError):
             print("\n已取消")
             sys.exit(0)
     
