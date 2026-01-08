@@ -14,6 +14,7 @@ import sys
 import os
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+import hashlib
 
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -60,9 +61,13 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 
+def hash_password(password: str) -> str:
+    """生成密码哈希（模拟前端SHA-256哈希）"""
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+
 def create_test_user(db, username="test_user"):
     """创建测试用户"""
-    from app.routes.auth import hash_password
     password_hash = hash_password("test_password")
     user = User(username=username, password_hash=password_hash)
     db.add(user)
@@ -153,7 +158,10 @@ def setup_test_cache(expired_codes, valid_codes, user_id):
             continue
 
         expire_at = pickup_code_obj.expire_at
-        is_expired = now > expire_at
+        # 确保 expire_at 是 aware datetime（从数据库读取的可能是 naive）
+        from app.utils.pickup_code import ensure_aware_datetime
+        expire_at = ensure_aware_datetime(expire_at) if expire_at else None
+        is_expired = expire_at and now > expire_at
 
         # 设置文件块缓存
         chunks = {

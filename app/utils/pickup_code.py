@@ -3,6 +3,7 @@
 """
 import random
 import string
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Union
 from sqlalchemy.orm import Session
@@ -130,9 +131,15 @@ def extract_lookup_code(full_code: str) -> str:
     
     返回：
     - 前6位查找码
+    
+    异常：
+    - ValueError: 如果取件码格式无效（长度或字符格式）
     """
     if len(full_code) != 12:
         raise ValueError(f"取件码长度错误，应为12位，实际为{len(full_code)}位")
+    # 验证字符格式（只允许大写字母和数字）
+    if not re.match(r'^[A-Z0-9]{12}$', full_code):
+        raise ValueError(f"取件码格式错误，只能包含大写字母和数字")
     return full_code[:6]
 
 
@@ -145,9 +152,15 @@ def extract_key_code(full_code: str) -> str:
 
     返回：
     - 后6位密钥码
+    
+    异常：
+    - ValueError: 如果取件码格式无效（长度或字符格式）
     """
     if len(full_code) != 12:
         raise ValueError(f"取件码长度错误，应为12位，实际为{len(full_code)}位")
+    # 验证字符格式（只允许大写字母和数字）
+    if not re.match(r'^[A-Z0-9]{12}$', full_code):
+        raise ValueError(f"取件码格式错误，只能包含大写字母和数字")
     return full_code[6:]
 
 

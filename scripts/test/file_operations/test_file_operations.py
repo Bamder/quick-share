@@ -23,6 +23,7 @@ import io
 from unittest.mock import Mock, AsyncMock
 import hashlib
 from datetime import datetime, timedelta, timezone
+from fastapi import UploadFile
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent.parent.parent
@@ -95,17 +96,34 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 
+def hash_password(password: str) -> str:
+    """生成密码哈希（模拟前端SHA-256哈希）"""
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+
 def create_test_user(db, username="test_user", password="test_password"):
     """创建测试用户"""
-    from app.routes.auth import hash_password
+    # 先检查用户是否已存在
+    existing_user = db.query(User).filter(User.username == username).first()
+    if existing_user:
+        return existing_user
+    
     password_hash = hash_password(password)
     user = User(
         username=username,
         password_hash=password_hash
     )
     db.add(user)
-    db.commit()
-    db.refresh(user)
+    try:
+        db.commit()
+        db.refresh(user)
+    except Exception as e:
+        db.rollback()
+        # 如果仍然失败（可能是并发问题），再次查询
+        existing_user = db.query(User).filter(User.username == username).first()
+        if existing_user:
+            return existing_user
+        raise e
     return user
 
 
@@ -202,8 +220,8 @@ def test_upload_chunk_normal(db):
             current_user=user
         ))
 
-        # 验证结果
-        if hasattr(result, 'status_code') and result.status_code == 200:
+        # 验证结果（服务函数返回字典，不是 JSONResponse）
+        if isinstance(result, dict) and result.get('code') == 200:
             log_success("文件块上传成功")
             return True
         else:
@@ -242,8 +260,8 @@ def test_upload_chunk_unauthorized(db):
             current_user=None  # 未登录用户
         ))
 
-        # 验证结果 - 应该返回错误
-        if hasattr(result, 'status_code') and result.status_code == 400:
+        # 验证结果 - 应该返回错误（服务函数返回字典，不是 JSONResponse）
+        if isinstance(result, dict) and result.get('code') == 400:
             log_success("正确拒绝未授权用户上传")
             return True
         else:
@@ -281,8 +299,8 @@ def test_upload_chunk_invalid_code(db):
             current_user=user
         ))
 
-        # 验证结果 - 应该返回错误
-        if hasattr(result, 'status_code') and result.status_code in [400, 404]:
+        # 验证结果 - 应该返回错误（服务函数返回字典，不是 JSONResponse）
+        if isinstance(result, dict) and result.get('code') in [400, 404]:
             log_success("正确拒绝无效取件码")
             return True
         else:
@@ -320,12 +338,12 @@ def test_upload_complete_normal(db):
             current_user=user
         ))
 
-        if not (hasattr(upload_result, 'status_code') and upload_result.status_code == 200):
+        if not (isinstance(upload_result, dict) and upload_result.get('code') == 200):
             log_error("文件块上传失败，无法进行完成测试")
             return False
 
         # 上传完成
-        from app.schemas.request import UploadCompleteRequest
+        from app.routes.relay import UploadCompleteRequest
         complete_request = UploadCompleteRequest(
             totalChunks=1,
             fileSize=len(chunk_data),
@@ -340,8 +358,8 @@ def test_upload_complete_normal(db):
             current_user=user
         ))
 
-        # 验证结果
-        if hasattr(complete_result, 'status_code') and complete_result.status_code == 200:
+        # 验证结果（服务函数返回字典，不是 JSONResponse）
+        if isinstance(complete_result, dict) and complete_result.get('code') == 200:
             log_success("上传完成成功")
             return True
         else:
@@ -369,12 +387,12 @@ def test_upload_different_file_sizes(db):
     passed = 0
     total = len(test_cases)
 
-    for size_name, size, mime_type in test_cases:
+    for i, (size_name, size, mime_type) in enumerate(test_cases):
         try:
             log_info(f"测试 {size_name} ({size} 字节)")
 
-            # 创建测试用户和取件码
-            user = create_test_user(db, f"test_size_user_{passed}", "password123")
+            # 创建测试用户和取件码（使用索引而不是 passed，避免重复）
+            user = create_test_user(db, f"test_size_user_{i}", "password123")
             lookup_code, full_code, file_record, pickup_code = create_test_pickup_code(db, user.id)
 
             # 生成相应大小的文件数据
@@ -391,7 +409,7 @@ def test_upload_different_file_sizes(db):
                 current_user=user
             ))
 
-            if hasattr(result, 'status_code') and result.status_code == 200:
+            if isinstance(result, dict) and result.get('code') == 200:
                 log_success(f"{size_name} 上传成功")
                 passed += 1
             else:
@@ -402,12 +420,14 @@ def test_upload_different_file_sizes(db):
         finally:
             # 清理当前测试的数据
             try:
-                db.query(PickupCode).filter(PickupCode.code == lookup_code).delete()
-                db.query(File).filter(File.id == file_record.id).delete()
-                db.query(User).filter(User.username == f"test_size_user_{passed-1}").delete()
+                if 'lookup_code' in locals():
+                    db.query(PickupCode).filter(PickupCode.code == lookup_code).delete()
+                if 'file_record' in locals():
+                    db.query(File).filter(File.id == file_record.id).delete()
+                db.query(User).filter(User.username == f"test_size_user_{i}").delete()
                 db.commit()
             except:
-                pass
+                db.rollback()
 
     log_info(f"不同文件大小测试: {passed}/{total} 通过")
     return passed == total
@@ -428,12 +448,12 @@ def test_upload_different_file_types(db):
     passed = 0
     total = len(test_cases)
 
-    for file_type, mime_type, content in test_cases:
+    for i, (file_type, mime_type, content) in enumerate(test_cases):
         try:
             log_info(f"测试 {file_type}")
 
-            # 创建测试用户和取件码
-            user = create_test_user(db, f"test_type_user_{passed}", "password123")
+            # 创建测试用户和取件码（使用索引而不是 passed，避免重复）
+            user = create_test_user(db, f"test_type_user_{i}", "password123")
             lookup_code, full_code, file_record, pickup_code = create_test_pickup_code(db, user.id)
 
             upload_file = create_mock_upload_file(content, f"test.{file_type.split()[0].lower()}", mime_type)
@@ -448,7 +468,7 @@ def test_upload_different_file_types(db):
                 current_user=user
             ))
 
-            if hasattr(result, 'status_code') and result.status_code == 200:
+            if isinstance(result, dict) and result.get('code') == 200:
                 log_success(f"{file_type} 上传成功")
                 passed += 1
             else:
@@ -459,12 +479,14 @@ def test_upload_different_file_types(db):
         finally:
             # 清理当前测试的数据
             try:
-                db.query(PickupCode).filter(PickupCode.code == lookup_code).delete()
-                db.query(File).filter(File.id == file_record.id).delete()
-                db.query(User).filter(User.username == f"test_type_user_{passed-1}").delete()
+                if 'lookup_code' in locals():
+                    db.query(PickupCode).filter(PickupCode.code == lookup_code).delete()
+                if 'file_record' in locals():
+                    db.query(File).filter(File.id == file_record.id).delete()
+                db.query(User).filter(User.username == f"test_type_user_{i}").delete()
                 db.commit()
             except:
-                pass
+                db.rollback()
 
     log_info(f"不同文件类型测试: {passed}/{total} 通过")
     return passed == total
@@ -484,7 +506,7 @@ def test_download_file_info_normal(db):
         upload_file = create_mock_upload_file(chunk_data, "test.txt")
 
         import asyncio
-        from app.schemas.request import UploadCompleteRequest
+        from app.routes.relay import UploadCompleteRequest
 
         # 上传块
         upload_result = asyncio.run(upload_chunk_service(
@@ -511,7 +533,7 @@ def test_download_file_info_normal(db):
             current_user=user
         ))
 
-        if not (hasattr(complete_result, 'status_code') and complete_result.status_code == 200):
+        if not (isinstance(complete_result, dict) and complete_result.get('code') == 200):
             log_error("上传完成失败，无法进行下载测试")
             return False
 
@@ -519,7 +541,7 @@ def test_download_file_info_normal(db):
         info_result = asyncio.run(get_file_info_service(code=lookup_code, db=db))
 
         # 验证结果
-        if hasattr(info_result, 'status_code') and info_result.status_code == 200:
+        if isinstance(info_result, dict) and info_result.get('code') == 200:
             log_success("获取文件信息成功")
             return True
         else:
@@ -548,7 +570,7 @@ def test_download_chunk_normal(db):
         upload_file = create_mock_upload_file(chunk_data, "test.txt")
 
         import asyncio
-        from app.schemas.request import UploadCompleteRequest
+        from app.routes.relay import UploadCompleteRequest
 
         # 上传块
         upload_result = asyncio.run(upload_chunk_service(
@@ -575,7 +597,7 @@ def test_download_chunk_normal(db):
             current_user=user
         ))
 
-        if not (hasattr(complete_result, 'status_code') and complete_result.status_code == 200):
+        if not (isinstance(complete_result, dict) and complete_result.get('code') == 200):
             log_error("上传完成失败，无法进行下载测试")
             return False
 
@@ -587,8 +609,12 @@ def test_download_chunk_normal(db):
             db=db
         ))
 
-        # 验证结果
-        if hasattr(download_result, 'status_code') and download_result.status_code == 200:
+        # 验证结果（download_chunk 成功时返回 StreamingResponse，错误时返回 JSONResponse 或字典）
+        from fastapi.responses import StreamingResponse
+        if isinstance(download_result, StreamingResponse):
+            log_success("下载文件块成功")
+            return True
+        elif isinstance(download_result, dict) and download_result.get('code') == 200:
             log_success("下载文件块成功")
             return True
         else:
@@ -617,7 +643,7 @@ def test_download_complete_normal(db):
         upload_file = create_mock_upload_file(chunk_data, "test.txt")
 
         import asyncio
-        from app.schemas.request import UploadCompleteRequest
+        from app.routes.relay import UploadCompleteRequest
 
         # 上传块
         upload_result = asyncio.run(upload_chunk_service(
@@ -644,7 +670,7 @@ def test_download_complete_normal(db):
             current_user=user
         ))
 
-        if not (hasattr(complete_result, 'status_code') and complete_result.status_code == 200):
+        if not (isinstance(complete_result, dict) and complete_result.get('code') == 200):
             log_error("上传完成失败，无法进行下载完成测试")
             return False
 
@@ -656,12 +682,14 @@ def test_download_complete_normal(db):
             db=db
         ))
 
-        if not (hasattr(download_result, 'status_code') and download_result.status_code == 200):
+        # download_chunk 成功时返回 StreamingResponse
+        from fastapi.responses import StreamingResponse
+        if not (isinstance(download_result, StreamingResponse) or (isinstance(download_result, dict) and download_result.get('code') == 200)):
             log_error("下载文件块失败，无法进行下载完成测试")
             return False
 
         # 完成下载
-        from app.schemas.request import DownloadCompleteRequest
+        from app.routes.relay import DownloadCompleteRequest
         complete_request = DownloadCompleteRequest(session_id="test_session_123")
 
         complete_result = asyncio.run(download_complete_service(
@@ -671,7 +699,7 @@ def test_download_complete_normal(db):
         ))
 
         # 验证结果
-        if hasattr(complete_result, 'status_code') and complete_result.status_code == 200:
+        if isinstance(complete_result, dict) and complete_result.get('code') == 200:
             log_success("下载完成成功")
             return True
         else:
@@ -704,8 +732,16 @@ def test_download_expired_code(db):
             db=db
         ))
 
-        # 验证结果 - 应该返回错误
-        if hasattr(download_result, 'status_code') and download_result.status_code in [400, 404]:
+        # 验证结果 - 应该返回错误（download_chunk 错误时返回 JSONResponse 或字典）
+        from fastapi.responses import JSONResponse
+        if isinstance(download_result, JSONResponse):
+            # 从 JSONResponse 中提取内容
+            import json
+            content = json.loads(download_result.body.decode()) if hasattr(download_result, 'body') else {}
+            if content.get('code') in [400, 404]:
+                log_success("正确拒绝过期取件码下载")
+                return True
+        elif isinstance(download_result, dict) and download_result.get('code') in [400, 404]:
             log_success("正确拒绝过期取件码下载")
             return True
         else:
@@ -734,8 +770,16 @@ def test_download_invalid_code(db):
             db=db
         ))
 
-        # 验证结果 - 应该返回错误
-        if hasattr(download_result, 'status_code') and download_result.status_code in [400, 404]:
+        # 验证结果 - 应该返回错误（download_chunk 错误时返回 JSONResponse 或字典）
+        from fastapi.responses import JSONResponse
+        if isinstance(download_result, JSONResponse):
+            # 从 JSONResponse 中提取内容
+            import json
+            content = json.loads(download_result.body.decode()) if hasattr(download_result, 'body') else {}
+            if content.get('code') in [400, 404]:
+                log_success("正确拒绝无效取件码下载")
+                return True
+        elif isinstance(download_result, dict) and download_result.get('code') in [400, 404]:
             log_success("正确拒绝无效取件码下载")
             return True
         else:
