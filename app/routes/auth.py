@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, EmailStr, Field
 from jose import jwt
+from jose.exceptions import JWTError
 
 from app.utils.response import (
     success_response, created_response,
@@ -250,12 +251,14 @@ def get_current_user(request: Request, db: Session = Depends(get_db)):
     
     返回：
     - 当前用户对象
-    - None: 如果没有登录
+    
+    抛出：
+    - HTTPException(401): 如果未登录或token无效
     """
     # 从请求头获取token
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
-        return None
+        raise HTTPException(status_code=401, detail="未提供认证令牌")
     
     token = auth_header.split(" ")[1]
     
@@ -265,16 +268,19 @@ def get_current_user(request: Request, db: Session = Depends(get_db)):
         user_id = payload.get("sub")
         
         if not user_id:
-            return None
+            raise HTTPException(status_code=401, detail="无效的认证令牌")
         
         # 查找用户
         user = db.query(User).filter(User.id == int(user_id)).first()
+        if not user:
+            raise HTTPException(status_code=401, detail="用户不存在")
+        
         return user
     
     except jwt.ExpiredSignatureError:
-        return None
-    except jwt.InvalidTokenError:
-        return None
+        raise HTTPException(status_code=401, detail="认证令牌已过期")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="无效的认证令牌")
     except Exception as e:
         logger.error(f"获取当前用户时发生错误: {str(e)}")
-        return None
+        raise HTTPException(status_code=401, detail="认证失败")

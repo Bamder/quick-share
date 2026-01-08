@@ -1,0 +1,98 @@
+{
+  "total": 10,
+  "passed": 10,
+  "failed": 0,
+  "skipped": 0,
+  "results": [
+    {
+      "test_id": "D-HEALTH",
+      "test_name": "健康检查端点测试",
+      "expected": "返回200状态码，服务健康",
+      "actual": "状态码: 200",
+      "status": "passed",
+      "notes": "",
+      "timestamp": "2026-01-08T11:54:46.430747"
+    },
+    {
+      "test_id": "D-015",
+      "test_name": "400 Bad Request错误测试",
+      "expected": "返回400或422状态码，包含错误信息",
+      "actual": "状态码: 422",
+      "status": "passed",
+      "notes": "",
+      "timestamp": "2026-01-08T11:54:48.483096"
+    },
+    {
+      "test_id": "D-016",
+      "test_name": "401 Unauthorized错误测试",
+      "expected": "返回401状态码，提示需要认证",
+      "actual": "状态码: 401",
+      "status": "passed",
+      "notes": "",
+      "timestamp": "2026-01-08T11:54:50.539234"
+    },
+    {
+      "test_id": "D-018",
+      "test_name": "404 Not Found错误测试（取件码）",
+      "expected": "返回业务状态码404（取件码不存在）",
+      "actual": "HTTP状态码: 200, 业务码: 404",
+      "status": "passed",
+      "notes": "",
+      "timestamp": "2026-01-08T11:54:52.600852"
+    },
+    {
+      "test_id": "D-018b",
+      "test_name": "404 Not Found错误测试（API端点）",
+      "expected": "返回404状态码",
+      "actual": "状态码: 404",
+      "status": "passed",
+      "notes": "",
+      "timestamp": "2026-01-08T11:54:54.674569"
+    },
+    {
+      "test_id": "D-019",
+      "test_name": "500 Internal Server Error错误测试",
+      "expected": "服务正常运行",
+      "actual": "状态码: 200（服务健康）",
+      "status": "passed",
+      "notes": "正常情况不触发500错误",
+      "timestamp": "2026-01-08T11:54:56.727608"
+    },
+    {
+      "test_id": "D-028a",
+      "test_name": "无效取件码格式测试",
+      "expected": "返回业务状态码400（取件码格式错误）",
+      "actual": "HTTP状态码: 200, 业务码: 400",
+      "status": "passed",
+      "notes": "",
+      "timestamp": "2026-01-08T11:54:58.798829"
+    },
+    {
+      "test_id": "D-028c",
+      "test_name": "不存在的取件码测试",
+      "expected": "返回业务状态码404（取件码不存在）",
+      "actual": "HTTP状态码: 200, 业务码: 404",
+      "status": "passed",
+      "notes": "",
+      "timestamp": "2026-01-08T11:55:00.850568"
+    },
+    {
+      "test_id": "D-DOCS",
+      "test_name": "API文档端点测试",
+      "expected": "返回200状态码，API文档可访问",
+      "actual": "状态码: 200",
+      "status": "passed",
+      "notes": "",
+      "timestamp": "2026-01-08T11:55:02.872686"
+    },
+    {
+      "test_id": "D-AUTH-REG",
+      "test_name": "用户注册功能测试",
+      "expected": "注册成功，返回200或201状态码",
+      "actual": "状态码: 201",
+      "status": "passed",
+      "notes": "测试用户名: testuser_fb996460",
+      "timestamp": "2026-01-08T11:55:04.959917"
+    }
+  ]
+}
