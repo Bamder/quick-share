@@ -64,9 +64,12 @@ async def create_code(
                 f"expireHours={request_data.expireHours}, client_ip={client_ip}, user_agent={user_agent[:50]}")
     
     try:
-        # 注意：current_user为None的检查已移除
-        # 因为get_current_user依赖现在会在未登录时抛出401异常
-        # FastAPI会自动处理认证失败的情况
+        # 检查权限：只有登录用户才能创建取件码
+        if not current_user:
+            return bad_request_response(
+                msg="只有登录用户才能生成取件码",
+                data={"code": "UNAUTHORIZED", "status": "unauthorized"}
+            )
         
         # 1. 检查文件是否已存在（去重逻辑）
         # 获取当前用户ID（用于文件去重和缓存隔离）
