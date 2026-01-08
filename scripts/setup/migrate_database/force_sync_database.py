@@ -168,21 +168,22 @@ class DatabaseSyncTool:
         head = self.get_head_version()
         all_versions = self.get_all_versions()
         
-        self._print("\n" + "=" * 60)
-        self._print("迁移版本列表")
-        self._print("=" * 60)
+        # list_versions 命令应该总是显示输出，即使有 --quiet 参数
+        print("\n" + "=" * 60)
+        print("迁移版本列表")
+        print("=" * 60)
         
         if current:
             marker = " (最新)" if current == head else ""
-            self._print(f"当前版本: {current}{marker}")
+            print(f"当前版本: {current}{marker}")
         else:
-            self._print("当前版本: 未初始化")
+            print("当前版本: 未初始化")
         
         if head:
-            self._print(f"最新版本 (head): {head}")
+            print(f"最新版本 (head): {head}")
         
-        self._print(f"\n所有可用版本 ({len(all_versions)} 个):")
-        self._print("-" * 60)
+        print(f"\n所有可用版本 ({len(all_versions)} 个):")
+        print("-" * 60)
         
         for version in all_versions:
             info = self.get_version_info(version)
@@ -193,9 +194,9 @@ class DatabaseSyncTool:
                 marker += " (head)"
             
             doc = info['doc'] if info else "无描述"
-            self._print(f"  {version[:12]}... {doc[:50]}{marker}")
+            print(f"  {version[:12]}... {doc[:50]}{marker}")
         
-        self._print()
+        print()
     
     def compare_versions(self, version1: Optional[str] = None, version2: Optional[str] = None) -> Dict:
         """比较两个版本的差异"""
@@ -204,22 +205,22 @@ class DatabaseSyncTool:
         
         if not v1 or not v2:
             result = {'error': '无法比较版本（缺少版本信息）'}
-            if not self.quiet:
-                print("\n" + "=" * 60)
-                print("版本比较结果")
-                print("=" * 60)
-                print(json.dumps(result, indent=2, ensure_ascii=False))
-                print()
+            # compare_versions 命令应该总是显示输出，即使有 --quiet 参数
+            print("\n" + "=" * 60)
+            print("版本比较结果")
+            print("=" * 60)
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            print()
             return result
         
         if v1 == v2:
             result = {'message': '版本相同，无需比较', 'from_version': v1, 'to_version': v2}
-            if not self.quiet:
-                print("\n" + "=" * 60)
-                print("版本比较结果")
-                print("=" * 60)
-                print(json.dumps(result, indent=2, ensure_ascii=False))
-                print()
+            # compare_versions 命令应该总是显示输出，即使有 --quiet 参数
+            print("\n" + "=" * 60)
+            print("版本比较结果")
+            print("=" * 60)
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            print()
             return result
         
         # 构建迁移链
@@ -254,12 +255,12 @@ class DatabaseSyncTool:
             'message': f'需要执行 {len(chain)} 个迁移步骤' if chain else '无法构建迁移链'
         }
         
-        if not self.quiet:
-            print("\n" + "=" * 60)
-            print("版本比较结果")
-            print("=" * 60)
-            print(json.dumps(result, indent=2, ensure_ascii=False))
-            print()
+        # compare_versions 命令应该总是显示输出，即使有 --quiet 参数
+        print("\n" + "=" * 60)
+        print("版本比较结果")
+        print("=" * 60)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        print()
         
         return result
     
