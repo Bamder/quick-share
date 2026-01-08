@@ -198,7 +198,7 @@ class EncryptedKeyCache:
         cache_key = _make_cache_key(user_id, lookup_code)
         return cache_manager.get('encrypted_key', cache_key)
     
-    def set(self, lookup_code: str, encrypted_key: str, user_id: Optional[int] = None, expire_at: Optional[datetime] = None):
+    def set(self, lookup_code: str, encrypted_key: str, user_id: Optional[int] = None, expire_at: Optional[datetime] = None) -> bool:
         """设置加密密钥"""
         cache_key = _make_cache_key(user_id, lookup_code)
         # 如果未提供过期时间，尝试从 file_info_cache 或 chunk_cache 中获取
@@ -228,7 +228,7 @@ class EncryptedKeyCache:
                 # 如果获取标识码失败，跳过从文件缓存获取过期时间
                 pass
         
-        cache_manager.set('encrypted_key', cache_key, encrypted_key, expire_at)
+        return cache_manager.set('encrypted_key', cache_key, encrypted_key, expire_at)
     
     def exists(self, lookup_code: str, user_id: Optional[int] = None) -> bool:
         """检查 lookup_code 是否存在"""

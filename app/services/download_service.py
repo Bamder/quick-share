@@ -529,3 +529,87 @@ async def download_complete(
             "status": pickup_code.status
         }
     )
+
+
+async def get_file_info(
+    code: str,
+    db: Session
+):
+    """
+    获取文件信息
+    
+    接收者使用此接口获取文件元信息
+    """
+    # 验证取件码（服务器只接收6位查找码）
+    if not validate_pickup_code(code):
+        return bad_request_response(msg="取件码格式错误，必须为6位大写字母或数字")
+    
+    # 使用查找码查询取件码（服务器只接收6位查找码，不接触后6位密钥码）
+    pickup_code = get_pickup_code_by_lookup(db, code)
+    if not pickup_code:
+        return not_found_response(msg=f"取件码不存在")
+    
+    # 检查并更新过期状态
+    is_expired = check_and_update_expired_pickup_code(pickup_code, db)
+    if is_expired or pickup_code.status == "expired":
+        return bad_request_response(
+            msg="取件码已过期，无法使用",
+            data={"code": "EXPIRED", "status": "expired"}
+        )
+    
+    if pickup_code.status == "completed":
+        return bad_request_response(
+            msg="取件码已完成，无法使用",
+            data={"code": "COMPLETED", "status": "completed"}
+        )
+    
+    # 检查使用次数限制
+    used_count = pickup_code.used_count or 0
+    limit_count = pickup_code.limit_count or 3
+    if limit_count != 999 and used_count >= limit_count:
+        return bad_request_response(
+            msg="取件码已达到使用上限，无法继续使用",
+            data={
+                "code": "LIMIT_REACHED",
+                "usedCount": used_count,
+                "limitCount": limit_count,
+                "remaining": 0
+            }
+        )
+    
+    # 提取查找码（前6位）用于缓存键
+    # code 就是查找码（6位），直接用作缓存键
+    lookup_code = code
+    
+    # 获取用户ID（用于缓存隔离）
+    # 从数据库获取文件的上传者ID
+    user_id = None
+    try:
+        from app.models.file import File
+        file_record = db.query(File).filter(File.id == pickup_code.file_id).first()
+        if file_record and file_record.uploader_id:
+            user_id = file_record.uploader_id
+    except Exception as e:
+        logger.debug(f"无法获取上传者ID: {e}")
+    
+    # 检查是否存在映射，如果存在则使用原始的 lookup_code 访问缓存
+    original_lookup_code = get_original_lookup_code(lookup_code, db)
+    
+    # 获取文件信息
+    # 使用原始的查找码作为键，支持多个 lookup_code 共享同一个文件信息缓存
+    if not file_info_cache.exists(original_lookup_code, user_id):
+        # 尝试向后兼容：不使用用户ID
+        if user_id is not None and file_info_cache.exists(original_lookup_code, None):
+            file_info = file_info_cache.get(original_lookup_code, None)
+        else:
+            return not_found_response(msg="文件信息不存在，可能尚未上传完成")
+    else:
+        file_info = file_info_cache.get(original_lookup_code, user_id)
+    
+    return success_response(data={
+        "fileName": file_info['fileName'],
+        "fileSize": file_info['fileSize'],
+        "mimeType": file_info['mimeType'],
+        "totalChunks": file_info['totalChunks'],
+        "uploadedAt": file_info['uploadedAt'].isoformat() + "Z"
+    })

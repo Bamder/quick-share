@@ -14,6 +14,11 @@ lookup_code_mapping = {}
 _failed_identifier_lookups = set()
 
 
+def clear_failed_lookups():
+    """清理失败标记（主要用于测试）"""
+    _failed_identifier_lookups.clear()
+
+
 def save_lookup_mapping(lookup_code: str, original_lookup_code: str, expire_at: Optional[datetime] = None):
     """
     保存查找码映射关系到Redis和内存
@@ -31,7 +36,7 @@ def save_lookup_mapping(lookup_code: str, original_lookup_code: str, expire_at: 
     logger.debug(f"保存映射关系: {lookup_code} -> {original_lookup_code} (Redis + 内存)")
 
 
-def get_identifier_code(lookup_code: str, db: Session = None, context: str = "unknown") -> str:
+def get_identifier_code(lookup_code: str, db: Session = None, context: str = "unknown") -> Optional[str]:
     """
     获取文件的"标识码"（identifier_code）：
     - 与第一个创建的取件码值一致（6位），但不是同一实体
@@ -41,15 +46,48 @@ def get_identifier_code(lookup_code: str, db: Session = None, context: str = "un
     解析策略：
     1) 先查内存映射；2) 再查Redis映射；3) 最后用数据库重建：优先最早"未过期"的取件码；
        若都过期，则不重建标识码（标识码机制：无活跃取件码时标识码不存在）
+    
+    返回:
+    - 标识码字符串，如果找到
+    - None，如果找不到或所有取件码都已过期
     """
-    # 检查是否已经确定此lookup_code无法重建标识码
+    # 验证输入：空字符串或无效查找码应返回 None
+    if not lookup_code or not isinstance(lookup_code, str) or len(lookup_code) != 6:
+        logger.info(f"[{context}] 无效的查找码: lookup_code={lookup_code!r}, type={type(lookup_code)}, len={len(lookup_code) if lookup_code else 0}")
+        return None
+
+    # 调试：检查内存映射
+    logger.info(f"[{context}] 查找标识码: lookup_code={lookup_code}, 内存映射中有: {list(lookup_code_mapping.keys())}, 失败标记中有: {list(_failed_identifier_lookups)}")
+
+    # 1. 内存（优先检查，因为内存映射是活跃的）
+    if lookup_code in lookup_code_mapping:
+        identifier_code = lookup_code_mapping[lookup_code]
+        logger.info(f"[{context}] 从内存获取标识码: {lookup_code} -> {identifier_code}")
+        # 如果提供了 db，检查过期时间
+        if db:
+            logger.info(f"[{context}] 提供了 db，检查过期时间")
+            try:
+                pickup_code = db.query(PickupCode).filter(PickupCode.code == lookup_code).first()
+                if pickup_code and pickup_code.expire_at:
+                    expire_at = ensure_aware_datetime(pickup_code.expire_at)
+                    now = DatetimeUtil.now()
+                    if expire_at <= now:
+                        # 已过期，从内存中删除并返回 None
+                        logger.info(f"[{context}] 内存映射已过期: lookup_code={lookup_code}, expire_at={expire_at}")
+                        del lookup_code_mapping[lookup_code]
+                        _failed_identifier_lookups.add(lookup_code)
+                        return None
+            except Exception as e:
+                logger.warning(f"检查内存映射过期时间失败: {e}")
+        logger.info(f"[{context}] 返回内存中的标识码: {identifier_code}")
+        return identifier_code
+    else:
+        logger.info(f"[{context}] 内存映射中未找到: {lookup_code}")
+    
+    # 检查是否已经确定此lookup_code无法重建标识码（在检查内存之后）
     if lookup_code in _failed_identifier_lookups:
         logger.debug(f"[{context}] 跳过标识码重建（已确认失败）: lookup_code={lookup_code}")
         return None
-
-    # 1. 内存
-    if lookup_code in lookup_code_mapping:
-        return lookup_code_mapping[lookup_code]
 
     # 2. Redis
     cached_mapping = cache_manager.get('lookup_mapping', lookup_code)
@@ -99,12 +137,12 @@ def get_identifier_code(lookup_code: str, db: Session = None, context: str = "un
         except Exception as e:
             logger.warning(f"从数据库重建标识码映射失败: {e}")
 
-    # 4. 兜底：自映射（键值相同）
-    lookup_code_mapping[lookup_code] = lookup_code
-    return lookup_code
+    # 4. 找不到映射关系，返回 None（不再使用自映射兜底）
+    logger.debug(f"[{context}] 未找到查找码映射: lookup_code={lookup_code}")
+    return None
 
 
-def get_original_lookup_code(lookup_code: str, db: Session = None) -> str:
+def get_original_lookup_code(lookup_code: str, db: Session = None) -> Optional[str]:
     """
     兼容旧接口：等价于 get_identifier_code
     """
@@ -180,9 +218,9 @@ def get_max_expire_at_for_original_lookup_code(original_lookup_code: str, db: Se
         # 所有取件码都已过期或完成，返回 None
         return None
     
-    # 找到最晚的过期时间
+    # 找到最晚的过期时间，并确保是 aware datetime
     max_expire_at = max(pickup_code.expire_at for pickup_code in pickup_codes)
-    return max_expire_at
+    return ensure_aware_datetime(max_expire_at) if max_expire_at else None
 
 def check_all_pickup_codes_expired_for_file(file_id: int, db: Session) -> bool:
     """
@@ -236,6 +274,11 @@ def update_cache_expire_at(original_lookup_code: str, new_expire_at: datetime, d
     """
     # 获取所有相关取件码中最晚的过期时间
     max_expire_at = get_max_expire_at_for_original_lookup_code(original_lookup_code, db)
+    
+    # 确保两个 datetime 都是 aware 的，以便比较
+    new_expire_at = ensure_aware_datetime(new_expire_at)
+    if max_expire_at:
+        max_expire_at = ensure_aware_datetime(max_expire_at)
     
     # 如果找到了更晚的过期时间，使用它；否则使用新取件码的过期时间
     if max_expire_at and max_expire_at > new_expire_at:

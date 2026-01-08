@@ -134,7 +134,7 @@ def cleanup_expired_chunks(db: Session = None):
                 logger.info(f"清理下载池中的过期数据: identifier_code={identifier_code}")
         
         # 3.3 清理主缓存（chunk_cache, file_info_cache, encrypted_key_cache）
-        # 文件块缓存和文件信息缓存使用标识码作为键
+        # 文件块缓存和文件信息缓存使用标识码作为键（如果可用），否则使用 lookup_code
         # 密钥缓存使用取件码作为键（每个取件码独立存储）
         chunk_cache_cleaned = 0
         file_info_cache_cleaned = 0
@@ -178,6 +178,45 @@ def cleanup_expired_chunks(db: Session = None):
                     file_info_cache.delete(identifier_code, user_id)
                     file_info_cache_cleaned += 1
                     logger.debug(f"清理文件信息缓存: identifier_code={identifier_code}, user_id={user_id}")
+        
+        # 对于无法获取标识码的 lookup_code，直接使用 lookup_code 清理缓存
+        # 这种情况发生在所有取件码都已过期，无法重建标识码时
+        for lookup_code in expired_lookup_codes:
+            # 检查是否已经通过 identifier_code 清理过
+            identifier_code = None
+            try:
+                identifier_code = get_identifier_code(lookup_code, db, "cleanup_fallback")
+            except Exception:
+                pass
+            
+            # 如果无法获取 identifier_code，说明所有取件码都已过期，直接使用 lookup_code 清理
+            if not identifier_code:
+                # 获取该 lookup_code 对应的所有取件码，找到所有可能的 user_id
+                pickup_codes_for_lookup = [pc for pc in expired_pickup_codes if pc.code and len(pc.code) >= 6 and pc.code[:6] == lookup_code]
+                user_ids_to_check = [None]  # 检查 None（anonymous）
+                
+                # 从数据库获取所有可能的 user_id
+                for pickup_code in pickup_codes_for_lookup:
+                    try:
+                        file_record = db.query(File).filter(File.id == pickup_code.file_id).first()
+                        if file_record and file_record.uploader_id and file_record.uploader_id not in user_ids_to_check:
+                            user_ids_to_check.append(file_record.uploader_id)
+                    except Exception as e:
+                        logger.debug(f"无法获取用户ID: {e}")
+                
+                # 为每个可能的 user_id 清理文件块缓存和文件信息缓存（使用 lookup_code）
+                for user_id in user_ids_to_check:
+                    # 清理文件块缓存（使用 lookup_code）
+                    if chunk_cache.exists(lookup_code, user_id):
+                        chunk_cache.delete(lookup_code, user_id)
+                        chunk_cache_cleaned += 1
+                        logger.debug(f"清理文件块缓存（fallback）: lookup_code={lookup_code}, user_id={user_id}")
+                    
+                    # 清理文件信息缓存（使用 lookup_code）
+                    if file_info_cache.exists(lookup_code, user_id):
+                        file_info_cache.delete(lookup_code, user_id)
+                        file_info_cache_cleaned += 1
+                        logger.debug(f"清理文件信息缓存（fallback）: lookup_code={lookup_code}, user_id={user_id}")
         
         # 清理密钥缓存（使用取件码，每个取件码独立存储）
         for lookup_code in expired_lookup_codes:
