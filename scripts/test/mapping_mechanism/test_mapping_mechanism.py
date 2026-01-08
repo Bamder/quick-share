@@ -21,6 +21,7 @@ import sys
 import os
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+import hashlib
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent.parent.parent
@@ -72,7 +73,7 @@ from app.models.file import File
 from app.models.pickup_code import PickupCode
 from app.services.mapping_service import (
     save_lookup_mapping, get_identifier_code, lookup_code_mapping,
-    get_original_lookup_code, update_cache_expire_at
+    get_original_lookup_code, update_cache_expire_at, clear_failed_lookups
 )
 from app.utils.pickup_code import DatetimeUtil, generate_unique_pickup_code
 import logging
@@ -87,9 +88,13 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 
+def hash_password(password: str) -> str:
+    """生成密码哈希（模拟前端SHA-256哈希）"""
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+
 def create_test_user(db, username="test_user", password="test_password"):
     """创建测试用户"""
-    from app.routes.auth import hash_password
     password_hash = hash_password(password)
     user = User(
         username=username,
@@ -144,7 +149,7 @@ def create_test_file_and_pickup_codes(db, user_id, num_codes=3, expire_hours=24)
 def cleanup_test_data(db):
     """清理测试数据"""
     # 清理内存映射
-    test_keys = ["TESTM01", "TESTM02", "TESTM03", "TESTM04", "TESTM05"]
+    test_keys = ["TESTM1", "TESTM2", "TESTM3", "TESTM4", "TESTM5"]
     for key in test_keys:
         if key in lookup_code_mapping:
             del lookup_code_mapping[key]
@@ -168,18 +173,32 @@ def test_save_and_get_mapping():
 
     try:
         # 清理可能的旧数据
-        test_lookup = "TESTM01"
-        test_original = "TESTM02"
+        test_lookup = "TESTM1"  # 6位查找码
+        test_original = "TESTM2"  # 6位标识码
 
+        # 清理失败标记和内存映射
+        clear_failed_lookups()
         if test_lookup in lookup_code_mapping:
             del lookup_code_mapping[test_lookup]
 
         # 保存映射关系
         expire_at = DatetimeUtil.add_hours(DatetimeUtil.now(), 1)
         save_lookup_mapping(test_lookup, test_original, expire_at)
+        
+        # 验证保存是否成功
+        if test_lookup not in lookup_code_mapping:
+            log_error(f"✗ 保存映射关系失败: {test_lookup} 不在 lookup_code_mapping 中")
+            log_error(f"  lookup_code_mapping 内容: {list(lookup_code_mapping.keys())}")
+            return False
+        if lookup_code_mapping[test_lookup] != test_original:
+            log_error(f"✗ 保存映射关系值错误: 期望{test_original}, 实际{lookup_code_mapping[test_lookup]}")
+            return False
+        log_info(f"✓ 验证保存成功: {test_lookup} -> {lookup_code_mapping[test_lookup]}")
 
         # 从内存获取
+        log_info(f"调试: 调用 get_identifier_code({test_lookup}) 前，lookup_code_mapping 中有: {list(lookup_code_mapping.keys())}")
         result = get_identifier_code(test_lookup)
+        log_info(f"调试: get_identifier_code({test_lookup}) 返回: {result}")
         if result == test_original:
             log_info(f"✓ 从内存获取映射成功: {test_lookup} -> {result}")
         else:
@@ -314,7 +333,7 @@ def test_expired_code_mapping(db):
         cleanup_test_data(db)
         # 清理新创建的取件码
         try:
-            db.query(PickupCode).filter(PickupCode.code == "TESTM05").delete()
+            db.query(PickupCode).filter(PickupCode.code == "TESTM5").delete()
             db.commit()
         except:
             pass
@@ -422,9 +441,13 @@ def test_mapping_edge_cases(db):
         else:
             log_error(f"✗ 不存在的查找码返回了结果: {result}")
 
-        # 测试没有数据库连接的情况
+        # 测试没有数据库连接的情况（使用不存在的查找码）
         total += 1
-        result = get_identifier_code("TESTM01", None, "test_no_db")
+        # 使用一个不存在的查找码，确保不在内存映射中
+        test_no_db_code = "NODB01"
+        if test_no_db_code in lookup_code_mapping:
+            del lookup_code_mapping[test_no_db_code]
+        result = get_identifier_code(test_no_db_code, None, "test_no_db")
         if result is None:
             log_info("✓ 无数据库连接时正确返回None")
             passed += 1

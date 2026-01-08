@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import base64
 from datetime import datetime, timedelta, timezone
+import hashlib
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent.parent.parent
@@ -76,9 +77,13 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 
+def hash_password(password: str) -> str:
+    """生成密码哈希（模拟前端SHA-256哈希）"""
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+
 def create_test_user(db, username="test_user"):
     """创建测试用户"""
-    from app.routes.auth import hash_password
     password_hash = hash_password("test_password")
     user = User(username=username, password_hash=password_hash)
     db.add(user)
@@ -318,11 +323,15 @@ def test_key_expiration_handling(db):
     try:
         user, file_record, pickup_code, lookup_code, full_code = create_test_setup(db)
 
-        # 存储一个短过期时间的密钥
+        # 存储一个短过期时间的密钥（使用更长的过期时间，确保存储操作有时间完成）
         test_key = base64.b64encode(b"short_lived_key_256_bits_00000").decode()
-        short_expire_at = DatetimeUtil.now() + timedelta(seconds=1)  # 1秒后过期
+        # 使用3秒过期时间，给存储操作足够的时间
+        short_expire_at = DatetimeUtil.now() + timedelta(seconds=3)
 
-        encrypted_key_cache.set(lookup_code, test_key, user.id, short_expire_at)
+        success = encrypted_key_cache.set(lookup_code, test_key, user.id, short_expire_at)
+        if not success:
+            log_error("✗ 密钥存储失败（可能已过期）")
+            return False
 
         # 立即检查，应该存在
         immediate_check = encrypted_key_cache.exists(lookup_code, user.id)

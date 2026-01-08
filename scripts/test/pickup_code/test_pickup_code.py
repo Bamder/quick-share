@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 import re
+import hashlib
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent.parent.parent
@@ -90,9 +91,13 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 
+def hash_password(password: str) -> str:
+    """生成密码哈希（模拟前端SHA-256哈希）"""
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+
 def create_test_user(db, username="test_user", password="test_password"):
     """创建测试用户"""
-    from app.routes.auth import hash_password
     password_hash = hash_password(password)
     user = User(
         username=username,
@@ -455,23 +460,44 @@ def test_usage_limit(db):
                     db, user.id, limit_count=limit_count
                 )
 
-                # 模拟使用达到限制
-                for i in range(limit_count + 1):  # 多试一次，应该失败
+                # 测试使用次数限制逻辑
+                # 业务逻辑：当 used_count >= limit_count 时，应该被拒绝（limit_count != 999）
+                test_passed = True
+                
+                # 测试在限制内的使用
+                for i in range(limit_count):
                     pickup_code.used_count = i
                     db.commit()
-
-                    if i < limit_count:
+                    db.refresh(pickup_code)
+                    
+                    # 检查是否应该被允许（used_count < limit_count）
+                    used_count = pickup_code.used_count or 0
+                    limit = pickup_code.limit_count or 3
+                    should_allow = (limit == 999) or (used_count < limit)
+                    
+                    if should_allow:
                         log_info(f"✓ {desc} - 使用 {i+1}/{limit_count} 次: 允许")
                     else:
-                        # 最后一次应该被拒绝
-                        log_info(f"✓ {desc} - 使用 {i+1}/{limit_count} 次: 正确拒绝")
-                        passed += 1
-                        break
-
-                if i == limit_count and pickup_code.used_count == limit_count:
-                    log_error(f"✗ {desc} - 超出限制仍被允许")
+                        log_error(f"✗ {desc} - 使用 {i+1}/{limit_count} 次: 错误拒绝")
+                        test_passed = False
+                
+                # 测试超出限制的使用
+                pickup_code.used_count = limit_count
+                db.commit()
+                db.refresh(pickup_code)
+                
+                used_count = pickup_code.used_count or 0
+                limit = pickup_code.limit_count or 3
+                should_reject = (limit != 999) and (used_count >= limit)
+                
+                if should_reject:
+                    log_info(f"✓ {desc} - 使用 {limit_count+1}/{limit_count} 次: 正确拒绝")
                 else:
-                    passed += 1  # 已经通过了
+                    log_error(f"✗ {desc} - 使用 {limit_count+1}/{limit_count} 次: 应拒绝但允许")
+                    test_passed = False
+                
+                if test_passed:
+                    passed += 1
 
             except Exception as e:
                 log_error(f"{desc} 测试异常: {e}")

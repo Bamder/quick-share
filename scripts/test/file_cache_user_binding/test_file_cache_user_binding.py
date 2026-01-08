@@ -76,7 +76,11 @@ from app.models.user import User
 from app.utils.dedupe import derive_dedupe_fingerprint
 import logging
 
-logging.basicConfig(level=logging.INFO)
+# 导入测试工具
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from test_utils import *
+
+logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 
@@ -93,9 +97,7 @@ class TestFileCacheUserBinding:
         
     def setup(self):
         """设置测试环境"""
-        logger.info("=" * 60)
-        logger.info("开始设置测试环境")
-        logger.info("=" * 60)
+        log_section("文件缓存与上传用户强绑定测试")
         
         # 默认使用 SQLite 内存数据库，避免依赖本机 MySQL 配置
         # 如需用真实数据库跑集成测试，可设置环境变量 TEST_DATABASE_URL
@@ -181,9 +183,7 @@ class TestFileCacheUserBinding:
     
     def test_case_1_same_hash_same_user(self):
         """测试用例1: 相同文件哈希 + 相同用户 = 可以复用缓存"""
-        logger.info("\n" + "=" * 60)
-        logger.info("测试用例1: 相同文件哈希 + 相同用户 = 可以复用缓存")
-        logger.info("=" * 60)
+        log_test_start("相同文件哈希 + 相同用户 = 可以复用缓存")
         
         # 步骤1: 用户1第一次上传文件（创建文件记录和缓存）
         logger.info("步骤1: 用户1第一次上传文件...")
@@ -236,10 +236,10 @@ class TestFileCacheUserBinding:
         
         encrypted_key_cache.set("TESTC1", "encrypted_key_1", self.user1.id)
         
-        logger.info(f"✓ 用户1的文件记录和缓存已创建: file_id={file1.id}, lookup_code=TESTC1")
+        log_info(f"✓ 用户1的文件记录和缓存已创建: file_id={file1.id}, lookup_code=TESTC1")
         
         # 步骤2: 用户1再次上传相同文件（应该检测到可复用）
-        logger.info("\n步骤2: 用户1再次上传相同文件...")
+        log_info("步骤2: 用户1再次上传相同文件...")
         
         # 检查文件是否存在
         existing_file = self.db.query(File).filter(
@@ -250,7 +250,7 @@ class TestFileCacheUserBinding:
         assert existing_file is not None, "应该找到已存在的文件"
         assert existing_file.uploader_id == self.user1.id, "文件的上传者应该是用户1"
         
-        logger.info(f"✓ 找到已存在的文件: file_id={existing_file.id}, uploader_id={existing_file.uploader_id}")
+        log_info(f"✓ 找到已存在的文件: file_id={existing_file.id}, uploader_id={existing_file.uploader_id}")
         
         # 检查缓存是否存在
         has_file_info = file_info_cache.exists("TESTC1", self.user1.id)
@@ -261,16 +261,14 @@ class TestFileCacheUserBinding:
         assert has_chunks, "文件块缓存应该存在"
         assert has_key, "密钥缓存应该存在"
         
-        logger.info(f"✓ 检测到可复用的缓存: has_file_info={has_file_info}, has_chunks={has_chunks}, has_key={has_key}")
+        log_info(f"✓ 检测到可复用的缓存: has_file_info={has_file_info}, has_chunks={has_chunks}, has_key={has_key}")
         
-        logger.info("\n✓ 测试用例1通过: 相同文件哈希 + 相同用户 = 可以复用缓存")
+        log_success("测试用例1通过: 相同文件哈希 + 相同用户 = 可以复用缓存")
         return True
     
     def test_case_2_same_hash_different_user(self):
         """测试用例2: 相同文件哈希 + 不同用户 = 不能复用缓存（用户隔离）"""
-        logger.info("\n" + "=" * 60)
-        logger.info("测试用例2: 相同文件哈希 + 不同用户 = 不能复用缓存（用户隔离）")
-        logger.info("=" * 60)
+        log_test_start("相同文件哈希 + 不同用户 = 不能复用缓存（用户隔离）")
         
         # 步骤1: 用户1上传文件（已在上一个测试用例中创建）
         logger.info("步骤1: 用户1已上传文件（使用测试用例1的数据）...")
@@ -302,8 +300,8 @@ class TestFileCacheUserBinding:
         
         assert existing_file_user2 is None, "不应该找到用户2的文件（因为用户2还没上传）"
         
-        logger.info(f"✓ 用户1的文件存在: file_id={existing_file_user1.id}, uploader_id={existing_file_user1.uploader_id}")
-        logger.info(f"✓ 用户2的文件不存在（符合预期）")
+        log_info(f"✓ 用户1的文件存在: file_id={existing_file_user1.id}, uploader_id={existing_file_user1.uploader_id}")
+        log_info(f"✓ 用户2的文件不存在（符合预期）")
         
         # 检查用户2是否能访问用户1的缓存（应该不能）
         has_file_info_user2 = file_info_cache.exists("TESTC1", self.user2.id)
@@ -314,10 +312,10 @@ class TestFileCacheUserBinding:
         assert not has_chunks_user2, "用户2不应该能访问用户1的文件块缓存"
         assert not has_key_user2, "用户2不应该能访问用户1的密钥缓存"
         
-        logger.info(f"✓ 用户隔离验证通过: user2无法访问user1的缓存")
+        log_info(f"✓ 用户隔离验证通过: user2无法访问user1的缓存")
         
         # 步骤3: 用户2创建自己的文件记录（应该创建新记录，不复用用户1的记录）
-        logger.info("\n步骤3: 用户2创建自己的文件记录...")
+        log_info("步骤3: 用户2创建自己的文件记录...")
         
         # 相同明文哈希，不同用户 => 去重指纹必须不同
         assert fingerprint_user1 != fingerprint_user2, "不同用户的去重指纹必须不同"
@@ -337,16 +335,14 @@ class TestFileCacheUserBinding:
         
         assert file2.id != existing_file_user1.id, "应该创建新的文件记录，不复用用户1的记录"
         
-        logger.info(f"✓ 用户2创建了新文件记录: file_id={file2.id}, uploader_id={file2.uploader_id}")
+        log_info(f"✓ 用户2创建了新文件记录: file_id={file2.id}, uploader_id={file2.uploader_id}")
         
-        logger.info("\n✓ 测试用例2通过: 相同文件哈希 + 不同用户 = 不能复用缓存（用户隔离）")
+        log_success("测试用例2通过: 相同文件哈希 + 不同用户 = 不能复用缓存（用户隔离）")
         return True
     
     def test_case_3_different_hash_same_user(self):
         """测试用例3: 不同文件哈希 + 相同用户 = 不能复用缓存"""
-        logger.info("\n" + "=" * 60)
-        logger.info("测试用例3: 不同文件哈希 + 相同用户 = 不能复用缓存")
-        logger.info("=" * 60)
+        log_test_start("不同文件哈希 + 相同用户 = 不能复用缓存")
         
         # 步骤1: 用户1上传文件1（已在上一个测试用例中创建）
         logger.info("步骤1: 用户1已上传文件1（使用测试用例1的数据）...")
@@ -396,16 +392,14 @@ class TestFileCacheUserBinding:
         
         assert file2.id != existing_file1.id, "应该创建新的文件记录，不复用文件1的记录"
         
-        logger.info(f"✓ 用户1创建了新文件记录: file_id={file2.id}, hash={self.test_file_hash_2[:16]}...")
+        log_info(f"✓ 用户1创建了新文件记录: file_id={file2.id}, hash={self.test_file_hash_2[:16]}...")
         
-        logger.info("\n✓ 测试用例3通过: 不同文件哈希 + 相同用户 = 不能复用缓存")
+        log_success("测试用例3通过: 不同文件哈希 + 相同用户 = 不能复用缓存")
         return True
     
     def test_case_4_expired_file_detection(self):
         """测试用例4: 验证未过期文件检测功能"""
-        logger.info("\n" + "=" * 60)
-        logger.info("测试用例4: 验证未过期文件检测功能")
-        logger.info("=" * 60)
+        log_test_start("验证未过期文件检测功能")
         
         # 步骤1: 用户1上传文件并创建未过期的取件码
         logger.info("步骤1: 用户1上传文件并创建未过期的取件码...")
@@ -479,7 +473,7 @@ class TestFileCacheUserBinding:
             pickup_expire_at = ensure_aware_datetime(pickup_expire_at)
             assert now < pickup_expire_at, "文件信息缓存应该未过期"
         
-        logger.info(f"✓ 文件信息缓存存在且未过期")
+        log_info(f"✓ 文件信息缓存存在且未过期")
         
         # 检查文件块缓存是否存在且未过期
         has_chunks = chunk_cache.exists("TESTC4", self.user1.id)
@@ -494,16 +488,14 @@ class TestFileCacheUserBinding:
                 chunk_expire_at = ensure_aware_datetime(chunk_expire_at)
                 assert now < chunk_expire_at, "文件块缓存应该未过期"
         
-        logger.info(f"✓ 文件块缓存存在且未过期")
+        log_info(f"✓ 文件块缓存存在且未过期")
         
-        logger.info("\n✓ 测试用例4通过: 未过期文件检测功能正常工作")
+        log_success("测试用例4通过: 未过期文件检测功能正常工作")
         return True
     
     def test_case_5_expired_file_allows_new_code(self):
         """测试用例5: 已过期文件允许创建新取件码"""
-        logger.info("\n" + "=" * 60)
-        logger.info("测试用例5: 已过期文件允许创建新取件码")
-        logger.info("=" * 60)
+        log_test_start("已过期文件允许创建新取件码")
         
         # 步骤1: 用户1上传文件并创建已过期的取件码
         logger.info("步骤1: 用户1上传文件并创建已过期的取件码...")
@@ -560,16 +552,13 @@ class TestFileCacheUserBinding:
         
         # 检查：即使文件块缓存存在，但因为所有取件码都已过期，应该允许创建新码
         # 这个逻辑在 create_code 函数中实现
-        logger.info(f"✓ 即使文件块缓存存在，但因为所有取件码都已过期，应该允许创建新码")
+        log_info(f"✓ 即使文件块缓存存在，但因为所有取件码都已过期，应该允许创建新码")
         
-        logger.info("\n✓ 测试用例5通过: 已过期文件允许创建新取件码")
+        log_success("测试用例5通过: 已过期文件允许创建新取件码")
         return True
     
     def run_all_tests(self):
         """运行所有测试用例"""
-        logger.info("\n" + "=" * 60)
-        logger.info("开始运行文件缓存与上传用户强绑定测试")
-        logger.info("=" * 60)
         
         try:
             self.setup()
@@ -589,33 +578,32 @@ class TestFileCacheUserBinding:
                 try:
                     result = test_func()
                     results.append((test_name, True, None))
-                    logger.info(f"\n✓ {test_name} 通过")
                 except AssertionError as e:
                     results.append((test_name, False, str(e)))
-                    logger.error(f"\n✗ {test_name} 失败: {e}")
+                    log_error(f"{test_name} 失败: {e}")
                 except Exception as e:
                     results.append((test_name, False, str(e)))
-                    logger.error(f"\n✗ {test_name} 异常: {e}")
+                    log_error(f"{test_name} 异常: {e}")
             
             # 输出测试结果摘要
-            logger.info("\n" + "=" * 60)
-            logger.info("测试结果摘要")
-            logger.info("=" * 60)
+            log_separator("测试结果汇总")
             
             passed = sum(1 for _, result, _ in results if result)
             failed = len(results) - passed
             
             for test_name, result, error in results:
-                status = "✓ 通过" if result else "✗ 失败"
-                logger.info(f"{status}: {test_name}")
-                if error:
-                    logger.info(f"  错误: {error}")
+                if result:
+                    log_success(f"{test_name} 通过")
+                else:
+                    log_error(f"{test_name} 失败")
+                    if error:
+                        log_info(f"  错误: {error}")
             
-            logger.info("\n" + "-" * 60)
-            logger.info(f"总计: {len(results)} 个测试用例")
-            logger.info(f"通过: {passed} 个")
-            logger.info(f"失败: {failed} 个")
-            logger.info("-" * 60)
+            log_info(f"总测试数: {len(results)}")
+            log_info(f"通过测试: {passed}")
+            log_info(f"失败测试: {failed}")
+            success_rate = (passed / len(results) * 100) if results else 0
+            log_info(f"成功率: {success_rate:.1f}%")
             
             return failed == 0
             
@@ -624,11 +612,16 @@ class TestFileCacheUserBinding:
             return False
         finally:
             # 清理测试数据
-            logger.info("\n清理测试数据...")
-            self.cleanup_test_data()
+            try:
+                self.cleanup_test_data()
+            except Exception as e:
+                log_error(f"清理测试数据时出错: {e}")
             if self.db:
+                try:
+                    self.db.rollback()
+                except:
+                    pass
                 self.db.close()
-            logger.info("测试数据清理完成")
 
 
 def main():
@@ -637,15 +630,11 @@ def main():
     success = tester.run_all_tests()
     
     if success:
-        logger.info("\n" + "=" * 60)
-        logger.info("所有测试用例通过！")
-        logger.info("=" * 60)
-        sys.exit(0)
+        log_success("所有文件缓存与上传用户强绑定测试通过！🎉")
     else:
-        logger.error("\n" + "=" * 60)
-        logger.error("部分测试用例失败！")
-        logger.error("=" * 60)
-        sys.exit(1)
+        log_error("部分文件缓存与上传用户强绑定测试失败，请检查实现")
+    
+    sys.exit(0 if success else 1)
 
 
 if __name__ == "__main__":

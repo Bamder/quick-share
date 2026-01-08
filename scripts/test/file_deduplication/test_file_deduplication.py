@@ -21,6 +21,7 @@ import sys
 import os
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+import hashlib
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent.parent.parent
@@ -83,9 +84,13 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 
+def hash_password(password: str) -> str:
+    """生成密码哈希（模拟前端SHA-256哈希）"""
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+
 def create_test_user(db, username="test_user", password="test_password"):
     """创建测试用户"""
-    from app.routes.auth import hash_password
     password_hash = hash_password(password)
     user = User(
         username=username,
@@ -257,14 +262,16 @@ def test_same_user_different_file(db):
         # 创建测试用户
         user = create_test_user(db, "user1", "password123")
 
-        # 创建第一个文件
-        file1, hash1 = create_test_file(
-            db, user.id, "test_dedupe_file1.txt", 1024
+        # 创建第一个文件（提供不同的明文哈希）
+        hash1 = "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3"
+        file1, _ = create_test_file(
+            db, user.id, "test_dedupe_file1.txt", 1024, plaintext_hash=hash1
         )
 
         # 创建第二个不同文件（不同文件名、大小和哈希）
-        file2, hash2 = create_test_file(
-            db, user.id, "test_dedupe_file2.txt", 2048
+        hash2 = "b665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3"
+        file2, _ = create_test_file(
+            db, user.id, "test_dedupe_file2.txt", 2048, plaintext_hash=hash2
         )
 
         # 检查第二个文件是否被识别为不同文件
