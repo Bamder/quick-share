@@ -20,11 +20,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    # is_invalidated 字段已通过其他方式添加到数据库中，此迁移仅用于标记版本
-    pass
+    # 添加 is_invalidated 字段到 files 表
+    op.add_column('files', 
+        sa.Column('is_invalidated', sa.Boolean(), nullable=True, server_default='0', comment='是否已被废弃')
+    )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    # 由于字段已存在且正在使用，不执行删除操作
-    pass
+    # 删除 is_invalidated 字段
+    op.drop_column('files', 'is_invalidated')
